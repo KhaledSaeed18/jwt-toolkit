@@ -1,3 +1,4 @@
+import binascii
 import click
 import json
 from rich.console import Console
@@ -53,5 +54,35 @@ def inspect(token: str):
         # Display the audit findings in a formatted table for easy interpretation of the security issues identified in the JWT token.    
         console.print(table)
 
+    except binascii.Error:
+        # Handle errors related to invalid base64url encoding, which can occur if the token is truncated, corrupted, or not properly formatted as a JWT.
+        console.print(Panel(
+            "[bold red]Token contains invalid base64url encoding[/bold red]\n\n"
+            "[dim]One or more parts could not be decoded[/dim]\n"
+            "[dim]The token may be truncated or corrupted[/dim]",
+            title="Decode Error",
+            border_style="red"
+        ))
+        raise SystemExit(2)
+
+    except json.JSONDecodeError as e:
+        # Handle errors related to invalid JSON in the header or payload, which can occur if the token is malformed or if the base64url decoding results in data that is not valid JSON.
+        console.print(Panel(
+            "[bold red]Token decoded but header or payload is not valid JSON[/bold red]\n\n"
+            f"[dim]JSON error : {e.msg}[/dim]\n"
+            "[dim]The token structure may be corrupted[/dim]",
+            title="Parse Error",
+            border_style="red"
+        ))
+        raise SystemExit(2)
+
     except ValueError as e:
-        console.print(f"[bold red]Error:[/bold red] {e}")
+        # Handle errors related to the overall structure of the JWT token, such as having an incorrect number of parts (not exactly 3), which indicates that the token is not properly formatted as a JWT.
+        console.print(Panel(
+            f"[bold red]{e}[/bold red]\n\n"
+            "[dim]A JWT must have exactly 3 base64url parts separated by dots[/dim]\n"
+            "[dim]Format : <header>.<payload>.<signature>[/dim]",
+            title="Invalid Token",
+            border_style="red"
+        ))
+        raise SystemExit(2)
