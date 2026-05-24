@@ -13,7 +13,40 @@ console = Console()
 @click.option("--bits", default=256, show_default=True, help="Secret length in bits (must be a multiple of 8)")
 @click.option("--encoding", type=click.Choice(["hex", "base64"]), default="hex", show_default=True, help="Output encoding")
 def generate_secret(bits: int, encoding: str):
-    # Validate that the specified number of bits is a multiple of 8, as secrets are typically represented in bytes, and each byte consists of 8 bits.
+    # Check if the number of bits is a positive integer, and provide an error message if it is not.
+    if bits <= 0:
+        console.print(Panel(
+            "[bold red]--bits must be a positive number[/bold red]\n\n"
+            f"[dim]You passed  : {bits} bits[/dim]\n"
+            f"[dim]Try instead : 256 bits[/dim]",
+            title="Invalid Input",
+            border_style="red"
+        ))
+        raise SystemExit(2)
+
+    # Check if the number of bits is less than or equal to 4096, and provide an error message if it exceeds this limit, as excessively long secrets may not be practical or necessary for most JWT use cases.
+    if bits > 4096:
+        console.print(Panel(
+            "[bold red]--bits must be 4096 or fewer[/bold red]\n\n"
+            f"[dim]You passed  : {bits} bits[/dim]\n"
+            f"[dim]Maximum     : 4096 bits[/dim]",
+            title="Invalid Input",
+            border_style="red"
+        ))
+        raise SystemExit(2)
+
+    # Check if the number of bits is less than 64, and provide an error message if it is too small to be secure, as secrets with insufficient entropy can be easily brute-forced.
+    if bits < 64:
+        console.print(Panel(
+            "[bold red]--bits is too small to be secure[/bold red]\n\n"
+            f"[dim]You passed  : {bits} bits[/dim]\n"
+            f"[dim]Minimum     : 64 bits[/dim]",
+            title="Invalid Input",
+            border_style="red"
+        ))
+        raise SystemExit(2)
+
+    # Check if the number of bits is a multiple of 8, and provide an error message if it is not, as secrets are typically generated in whole bytes (8 bits), and non-multiple of 8 values may lead to confusion or incorrect secret lengths.
     if bits % 8 != 0:
         console.print(Panel(
             "[bold red]--bits must be a multiple of 8[/bold red]\n\n"
