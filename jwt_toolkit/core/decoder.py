@@ -1,7 +1,7 @@
 import base64
 import json
 
-# Functions used to decode JWT tokens.
+# Decoder module to handle splitting and decoding of JWT tokens into their components.
 
 # Splits a JWT token into its header, payload, and signature components.
 def split_token(token: str) -> tuple[str, str, str]:
