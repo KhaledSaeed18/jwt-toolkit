@@ -7,3 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
     "click>=8.4.1",
 ]
+
+[project.scripts]
+jwt-toolkit = "jwt_toolkit.cli:cli"
