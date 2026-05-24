@@ -15,7 +15,14 @@ console = Console()
 def generate_secret(bits: int, encoding: str):
     # Validate that the specified number of bits is a multiple of 8, as secrets are typically represented in bytes, and each byte consists of 8 bits.
     if bits % 8 != 0:
-        raise click.UsageError("--bits must be a multiple of 8")
+        console.print(Panel(
+            "[bold red]--bits must be a multiple of 8[/bold red]\n\n"
+            f"[dim]You passed  : {bits} bits[/dim]\n"
+            f"[dim]Try instead : {(bits // 8 + 1) * 8} bits[/dim]",
+            title="Invalid Input",
+            border_style="red"
+        ))
+        raise SystemExit(2)
 
     # Generate a random secret key using the secrets module, which provides a secure way to generate random bytes.
     # The length of the secret is determined by the specified number of bits, and the output is encoded in either hexadecimal or base64 format based on the user's choice.
