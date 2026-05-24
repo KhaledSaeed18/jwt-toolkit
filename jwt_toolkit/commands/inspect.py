@@ -18,7 +18,6 @@ SEVERITY_COLORS = {
     Severity.PASS: "green",
 }
 
-
 @click.command()
 @click.argument("token")
 def inspect(token: str):
@@ -32,7 +31,8 @@ def inspect(token: str):
         console.print(Panel(json.dumps(payload, indent=2), title="Payload", border_style="blue"))
         # Display the signature, or indicate if there is no signature (e.g., for "none" algorithm).
         console.print(Panel(signature or "(none)", title="Signature", border_style="blue"))
-
+            
+        # Perform a security audit on the decoded header and payload to identify potential issues or weaknesses in the JWT token, and collect the findings for display.    
         findings = audit(header, payload)
 
         # Create a table to display the audit findings with appropriate severity coloring and details for each finding.
@@ -41,6 +41,7 @@ def inspect(token: str):
         table.add_column("Field", width=12)
         table.add_column("Detail")
 
+        # Iterate through the findings from the audit and add them to the table with color coding based on severity for better visualization of the results.
         for f in findings:
             color = SEVERITY_COLORS[f.severity]
             table.add_row(
@@ -49,6 +50,7 @@ def inspect(token: str):
                 f.message,
             )
 
+        # Display the audit findings in a formatted table for easy interpretation of the security issues identified in the JWT token.    
         console.print(table)
 
     except ValueError as e:
