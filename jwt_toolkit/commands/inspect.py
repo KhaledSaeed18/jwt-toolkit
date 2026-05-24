@@ -26,12 +26,16 @@ def inspect(token: str):
         # Decode the JWT token to extract its header, payload, and signature components.
         header, payload, signature = decode_token(token)
         
+        # Display the decoded header.
         console.print(Panel(json.dumps(header, indent=2), title="Header", border_style="blue"))
+        # Display the decoded payload.
         console.print(Panel(json.dumps(payload, indent=2), title="Payload", border_style="blue"))
+        # Display the signature, or indicate if there is no signature (e.g., for "none" algorithm).
         console.print(Panel(signature or "(none)", title="Signature", border_style="blue"))
 
         findings = audit(header, payload)
 
+        # Create a table to display the audit findings with appropriate severity coloring and details for each finding.
         table = Table(title="Security Audit", show_lines=True)
         table.add_column("Severity", style="bold", width=10)
         table.add_column("Field", width=12)
