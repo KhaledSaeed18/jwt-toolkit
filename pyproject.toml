@@ -1,6 +1,6 @@
 [project]
 name = "jwt-toolkit"
-version = "0.1.1"
+version = "0.1.2"
 description = "A command-line toolkit for inspecting, verifying, cracking, and securing JSON Web Tokens. Built to expose how JWT signing works and where it breaks."
 readme = "README.md"
 requires-python = ">=3.13"

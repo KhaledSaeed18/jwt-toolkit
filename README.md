@@ -1,7 +1,7 @@
 # JWT Toolkit
 
 <p align="center">
-  <a href="https://pypi.org/project/jwt-toolkit/"><img src="assets/images/demo.jpg" alt="jwt-toolkit demo" width="820"></a>
+  <a href="https://pypi.org/project/jwt-toolkit/"><img src="https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main/assets/images/demo.jpg" alt="jwt-toolkit demo" width="820"></a>
 </p>
 
 <p align="center">
