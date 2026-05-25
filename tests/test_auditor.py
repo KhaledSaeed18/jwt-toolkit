@@ -5,6 +5,8 @@ import pytest
 from jwt_toolkit.core.auditor import (
     Grade,
     Severity,
+    _audit_b64,
+    _audit_crit,
     _audit_kid_injection,
     _audit_sensitive_values,
     _audit_typ,
@@ -285,3 +287,111 @@ def test_grade_b_with_one_warn():
 def test_grade_f_with_critical():
     report = run_audit({"alg": "none", "typ": "JWT"}, {})
     assert report.grade is Grade.F
+
+
+# CVE annotations on existing findings
+
+
+def test_alg_none_message_references_cve():
+    report = run_audit({"alg": "none", "typ": "JWT"}, {})
+    f = _find(report.findings, "alg")
+    assert "CVE-2015-2951" in f.message
+
+
+def test_jwk_smuggling_message_references_cve():
+    report = run_audit({"alg": "RS256", "typ": "JWT", "jwk": {"kty": "RSA"}}, {})
+    f = _find(report.findings, "jwk")
+    assert "CVE-2018-0114" in f.message
+
+
+# HS + key-smuggling key-confusion (CVE-2016-10555)
+
+
+@pytest.mark.parametrize("header_name", ["jwk", "jku", "x5u", "x5c"])
+def test_hs_alg_with_key_smuggling_header_is_critical(header_name):
+    value = {"kty": "RSA"} if header_name == "jwk" else "https://example.com/keys"
+    report = run_audit({"alg": "HS256", "typ": "JWT", header_name: value}, {})
+    confusion = next(
+        (f for f in report.findings if f.field == "alg" and f.severity is Severity.CRITICAL),
+        None,
+    )
+    assert confusion is not None
+    assert "CVE-2016-10555" in confusion.message
+    assert header_name in confusion.message
+    assert report.grade is Grade.F
+
+
+def test_asymmetric_alg_with_smuggling_does_not_trigger_confusion():
+    # RS256 + jku is already flagged by _audit_header_key_smuggling; the
+    # key-confusion cross-check must not double-fire for asymmetric algorithms.
+    report = run_audit({"alg": "RS256", "typ": "JWT", "jku": "https://trusted.com/keys"}, {})
+    alg_criticals = [
+        f for f in report.findings if f.field == "alg" and f.severity is Severity.CRITICAL
+    ]
+    assert alg_criticals == []
+
+
+def test_hs_alg_without_smuggling_does_not_trigger_confusion():
+    report = run_audit({"alg": "HS256", "typ": "JWT"}, {})
+    alg_criticals = [
+        f for f in report.findings if f.field == "alg" and f.severity is Severity.CRITICAL
+    ]
+    assert alg_criticals == []
+
+
+# crit header (RFC 7515)
+
+
+def test_crit_absent_emits_nothing():
+    assert _audit_crit({"alg": "RS256"}) == []
+
+
+def test_crit_well_formed_with_present_params_is_warn():
+    findings = _audit_crit({"alg": "RS256", "crit": ["exp"], "exp": 0})
+    assert findings[0].severity is Severity.WARN
+    assert "crit" in findings[0].message
+
+
+def test_crit_listing_missing_param_is_critical():
+    findings = _audit_crit({"alg": "RS256", "crit": ["b64"]})
+    assert findings[0].severity is Severity.CRITICAL
+    assert "b64" in findings[0].message
+
+
+def test_crit_empty_list_is_warn():
+    findings = _audit_crit({"alg": "RS256", "crit": []})
+    assert findings[0].severity is Severity.WARN
+
+
+def test_crit_non_list_is_critical():
+    findings = _audit_crit({"alg": "RS256", "crit": "exp"})
+    assert findings[0].severity is Severity.CRITICAL
+
+
+def test_crit_list_with_non_string_entries_is_critical():
+    findings = _audit_crit({"alg": "RS256", "crit": ["exp", 42]})
+    assert findings[0].severity is Severity.CRITICAL
+
+
+# b64 header (RFC 7797)
+
+
+def test_b64_absent_emits_nothing():
+    assert _audit_b64({"alg": "RS256"}) == []
+
+
+def test_b64_false_is_warn():
+    findings = _audit_b64({"alg": "RS256", "b64": False})
+    assert findings[0].severity is Severity.WARN
+    assert "RFC 7797" in findings[0].message
+
+
+def test_b64_true_is_info():
+    findings = _audit_b64({"alg": "RS256", "b64": True})
+    assert findings[0].severity is Severity.INFO
+
+
+def test_b64_non_boolean_is_warn():
+    findings = _audit_b64({"alg": "RS256", "b64": "false"})
+    assert findings[0].severity is Severity.WARN
+    assert "str" in findings[0].message

@@ -37,6 +37,12 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
 # An attacker who controls these can sometimes coerce the verifier into trusting their key.
 _KEY_SMUGGLING_HEADERS = ("jwk", "jku", "x5u", "x5c")
 
+# CVE references attached to findings whose shape matches a known disclosed vulnerability.
+# Keep the catalogue narrow — only well-known CVEs that map cleanly to a single header pattern.
+_CVE_ALG_NONE = "CVE-2015-2951"
+_CVE_HS_RS_CONFUSION = "CVE-2016-10555"
+_CVE_JWK_INJECTION = "CVE-2018-0114"
+
 # Characters that have caused real-world `kid` injection bugs
 # (path traversal, SQLi, command injection, null-byte truncation).
 # "/" is intentionally excluded — it is a legitimate path separator in
@@ -145,6 +151,9 @@ def audit(
     findings.extend(_audit_typ(header))
     findings.extend(_audit_kid_injection(header))
     findings.extend(_audit_header_key_smuggling(header))
+    findings.extend(_audit_alg_key_confusion(header))
+    findings.extend(_audit_crit(header))
+    findings.extend(_audit_b64(header))
     findings.extend(_audit_expiry(payload))
     findings.extend(_audit_nbf(payload))
     findings.extend(_audit_iat(payload))
@@ -192,7 +201,7 @@ def _audit_algorithm(header: dict) -> list[Finding]:
             Finding(
                 Severity.CRITICAL,
                 "alg",
-                "alg:none means the token carries no signature",
+                f"alg:none means the token carries no signature ({_CVE_ALG_NONE})",
                 "Reject tokens whose header advertises alg:none at the verifier.",
             )
         ]
@@ -277,7 +286,7 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
                 Finding(
                     Severity.CRITICAL,
                     "jwk",
-                    "Header embeds a JWK — an attacker can ship their own key with the token",
+                    f"Header embeds a JWK — an attacker can ship their own key with the token ({_CVE_JWK_INJECTION})",
                     "Ignore the embedded jwk header; resolve keys from a server-side trust store.",
                 )
             )
@@ -303,6 +312,101 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
                 )
             )
     return findings
+
+
+# Cross-check: HS* algorithm combined with header-supplied key material is the
+# classic key-confusion shape — the verifier may resolve the "public key" from
+# the header and then use it as an HMAC secret.
+def _audit_alg_key_confusion(header: dict) -> list[Finding]:
+    alg = str(header.get("alg", "")).upper()
+    if alg not in SYMMETRIC_ALGORITHMS:
+        return []
+    smuggled = [name for name in _KEY_SMUGGLING_HEADERS if name in header]
+    if not smuggled:
+        return []
+    return [
+        Finding(
+            Severity.CRITICAL,
+            "alg",
+            f"alg={alg} combined with {', '.join(smuggled)} header(s) — "
+            f"classic key-confusion shape ({_CVE_HS_RS_CONFUSION})",
+            "Pin the verifier to one algorithm family per key; never resolve HMAC "
+            "secrets from header-supplied key material.",
+        )
+    ]
+
+
+def _audit_crit(header: dict) -> list[Finding]:
+    if "crit" not in header:
+        return []
+    crit = header["crit"]
+    if not isinstance(crit, list) or not all(isinstance(x, str) for x in crit):
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "crit",
+                "crit header is malformed — RFC 7515 requires a non-empty list of strings",
+                "Reject the token; a malformed crit is unparseable and unsafe to ignore.",
+            )
+        ]
+    if not crit:
+        return [
+            Finding(
+                Severity.WARN,
+                "crit",
+                "crit header is an empty list — RFC 7515 requires at least one entry",
+                "Reject tokens with an empty crit list.",
+            )
+        ]
+    dangling = [name for name in crit if name not in header]
+    if dangling:
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "crit",
+                f"crit lists parameter(s) not present in the header: {dangling}",
+                "Reject the token — every name in crit must be a recognised, present header parameter.",
+            )
+        ]
+    return [
+        Finding(
+            Severity.WARN,
+            "crit",
+            f"crit header is present ({crit}) — many verifiers silently ignore it",
+            "Confirm the verifier rejects tokens whose crit extensions it does not implement.",
+        )
+    ]
+
+
+def _audit_b64(header: dict) -> list[Finding]:
+    if "b64" not in header:
+        return []
+    b64 = header["b64"]
+    if b64 is False:
+        return [
+            Finding(
+                Severity.WARN,
+                "b64",
+                "b64:false (RFC 7797) — payload is not base64url-encoded; "
+                "many verifiers mishandle this form",
+                "Reject tokens with b64:false unless the verifier explicitly implements RFC 7797.",
+            )
+        ]
+    if b64 is True:
+        return [
+            Finding(
+                Severity.INFO,
+                "b64",
+                "b64:true is the default — the header is redundant but harmless",
+            )
+        ]
+    return [
+        Finding(
+            Severity.WARN,
+            "b64",
+            f"b64 header has non-boolean value ({type(b64).__name__}) — RFC 7797 requires a boolean",
+        )
+    ]
 
 
 # Payload checks
