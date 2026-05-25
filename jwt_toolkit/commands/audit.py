@@ -1,21 +1,17 @@
-import binascii
 import json
+
 import click
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, safe_decode
 from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
-from jwt_toolkit.core.decoder import decode_token
 
 # Audit command — decodes a JWT, runs the security auditor, and emits a verdict.
 # Static checks only; no signature verification or key resolution.
 
-# Stable schema identifier for `--json` consumers. Bump when the shape changes.
-_JSON_SCHEMA_VERSION = "0.1"
 
-console = Console()
-
-# Severity - display colour mapping for the findings table.
 _SEVERITY_COLORS = {
     Severity.CRITICAL: "bold red",
     Severity.WARN: "yellow",
@@ -23,13 +19,13 @@ _SEVERITY_COLORS = {
     Severity.PASS: "green",
 }
 
-# Grade - (verdict label, colour) mapping for the top-of-output panel.
 _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     Grade.A: ("SECURE",    "green"),
     Grade.B: ("WEAK",      "yellow"),
     Grade.C: ("WEAK",      "yellow"),
     Grade.F: ("INSECURE",  "red"),
 }
+
 
 @click.command(help="Audit a JWT and emit a security verdict.")
 @click.argument("token")
@@ -45,57 +41,18 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     help="Emit a machine-readable report. Schema is experimental.",
 )
 def audit(token: str, strict: bool, as_json: bool):
-    try:
-        # Decode first; if the token is malformed we never get to the auditor.
-        header, payload, signature = decode_token(token)
-        report = run_audit(header, payload)
-        exit_code = _resolve_exit_code(report, strict=strict)
+    decoded = safe_decode(token, as_json=as_json)
+    report = run_audit(decoded.header, decoded.payload)
+    exit_code = _resolve_exit_code(report, strict=strict)
 
-        if as_json:
-            _emit_json(header, payload, signature, report, exit_code, strict)
-        else:
-            _emit_rich(header, payload, signature, report)
+    if as_json:
+        _emit_json(decoded.header, decoded.payload, decoded.signature, report, exit_code, strict)
+    else:
+        _emit_rich(decoded.header, decoded.payload, decoded.signature, report)
 
-        raise SystemExit(exit_code)
-
-    except binascii.Error:
-        # Token parts could not be base64url-decoded.
-        _print_error(
-            "Token contains invalid base64url encoding",
-            "One or more parts could not be decoded",
-            "The token may be truncated or corrupted",
-            title="Decode Error",
-            as_json=as_json,
-            error_code="invalid_base64url",
-        )
-        raise SystemExit(2)
-
-    except json.JSONDecodeError as e:
-        # Base64 decoded fine but the content is not valid JSON.
-        _print_error(
-            "Token decoded but header or payload is not valid JSON",
-            f"JSON error : {e.msg}",
-            "The token structure may be corrupted",
-            title="Parse Error",
-            as_json=as_json,
-            error_code="invalid_json",
-        )
-        raise SystemExit(2)
-
-    except ValueError as e:
-        # Token does not have the expected 3-part structure.
-        _print_error(
-            str(e),
-            "A JWT must have exactly 3 base64url parts separated by dots",
-            "Format : <header>.<payload>.<signature>",
-            title="Invalid Token",
-            as_json=as_json,
-            error_code="invalid_structure",
-        )
-        raise SystemExit(2)
+    raise SystemExit(exit_code)
 
 
-# Exit-code resolution
 def _resolve_exit_code(report: Report, *, strict: bool) -> int:
     # Grade F is always a hard failure. --strict promotes any WARN to a failure too.
     if report.grade is Grade.F:
@@ -105,7 +62,6 @@ def _resolve_exit_code(report: Report, *, strict: bool) -> int:
     return 0
 
 
-# JSON output
 def _emit_json(
     header: dict,
     payload: dict,
@@ -116,7 +72,7 @@ def _emit_json(
 ) -> None:
     verdict, _ = _GRADE_STYLES[report.grade]
     document = {
-        "schema_version": _JSON_SCHEMA_VERSION,
+        "schema_version": JSON_SCHEMA_VERSION,
         "grade": report.grade.value,
         "verdict": verdict,
         "exit_code": exit_code,
@@ -138,7 +94,6 @@ def _emit_json(
     click.echo(json.dumps(document, indent=2, sort_keys=False, default=str))
 
 
-# Rich output
 def _emit_rich(header: dict, payload: dict, signature: str, report: Report) -> None:
     console.print(Panel(json.dumps(header, indent=2),  title="Header",    border_style="blue"))
     console.print(Panel(json.dumps(payload, indent=2), title="Payload",   border_style="blue"))
@@ -165,8 +120,8 @@ def _render_verdict(report: Report) -> Panel:
 
 
 def _render_findings_table(report: Report) -> Table:
-    # Skip the Recommendation column entirely when nothing has one — keeps the
-    # table compact in the common case where every finding is a PASS.
+    # Skip the Recommendation column when nothing has one — keeps the table
+    # compact in the common case where every finding is a PASS.
     show_recs = any(f.recommendation for f in report.findings)
 
     table = Table(title="Findings", show_lines=True)
@@ -203,27 +158,3 @@ def _render_footer(report: Report) -> Panel | None:
     if not hints:
         return None
     return Panel("\n".join(hints), title="Next steps", border_style="blue")
-
-
-# Error rendering
-
-def _print_error(
-    headline: str,
-    *detail_lines: str,
-    title: str,
-    as_json: bool,
-    error_code: str,
-) -> None:
-    if as_json:
-        click.echo(json.dumps({
-            "schema_version": _JSON_SCHEMA_VERSION,
-            "error": error_code,
-            "message": headline,
-            "detail": list(detail_lines),
-        }, indent=2))
-        return
-
-    body = f"[bold red]{headline}[/bold red]\n\n" + "\n".join(
-        f"[dim]{line}[/dim]" for line in detail_lines
-    )
-    console.print(Panel(body, title=title, border_style="red"))

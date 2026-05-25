@@ -2,9 +2,8 @@ import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
+
 import click
-from rich.console import Console
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -16,9 +15,10 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-# Download command — fetches the latest common-secrets wordlist from the jwt-toolkit repo.
+from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.panels import print_error, print_success
 
-console = Console()
+# Download command — fetches the latest common-secrets wordlist from the jwt-toolkit repo.
 
 _WORDLIST_URL = (
     "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main"
@@ -28,7 +28,7 @@ _FILENAME = "common-secrets.txt"
 
 
 def _open_url(url: str):
-    # Open a URL, falling back to an unverified context on macOS cert issues.
+    # Fall back to an unverified context on macOS cert issues.
     try:
         return urllib.request.urlopen(url, timeout=30)
     except ssl.SSLCertVerificationError:
@@ -37,7 +37,6 @@ def _open_url(url: str):
 
 
 def _download(url: str, dest: Path) -> int:
-    # Stream URL to dest with a Rich progress bar. Returns bytes written.
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold]common-secrets.txt[/bold]"),
@@ -121,13 +120,12 @@ def download_wordlists(output_dir: str, force: bool):
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        console.print(Panel(
-            f"[bold red]Cannot create output directory[/bold red]\n\n"
-            f"[dim]Path  : {dest_dir}[/dim]\n"
-            f"[dim]Error : {exc.strerror}[/dim]",
+        print_error(
+            "Cannot create output directory",
+            f"Path  : {dest_dir}",
+            f"Error : {exc.strerror}",
             title="Directory Error",
-            border_style="red",
-        ))
+        )
         raise SystemExit(2)
 
     dest = dest_dir / _FILENAME
@@ -147,24 +145,24 @@ def download_wordlists(output_dir: str, force: bool):
     except click.ClickException:
         raise
     except OSError as exc:
-        console.print(Panel(
-            f"[bold red]Could not write file[/bold red]\n\n"
-            f"[dim]Path  : {dest}[/dim]\n"
-            f"[dim]Error : {exc}[/dim]",
+        print_error(
+            "Could not write file",
+            f"Path  : {dest}",
+            f"Error : {exc}",
             title="Write Error",
-            border_style="red",
-        ))
+        )
         raise SystemExit(2)
 
     lines = _count_lines(dest)
 
-    console.print(Panel(
-        f"[bold green]{_FILENAME}[/bold green]\n\n"
-        f"[dim]Saved to : {dest}[/dim]\n"
-        f"[dim]Size     : {_fmt_bytes(written)}[/dim]\n"
-        f"[dim]Entries  : {lines:,} lines[/dim]\n\n"
-        f"[dim]Use with crack:[/dim]\n"
-        f"[bold]jwt-toolkit crack <token> {dest}[/bold]",
+    print_success(
+        _FILENAME,
+        f"Saved to : {dest}",
+        f"Size     : {_fmt_bytes(written)}",
+        f"Entries  : {lines:,} lines",
         title="[bold green]Downloaded[/bold green]",
-        border_style="green",
-    ))
+        footer=(
+            "[dim]Use with crack:[/dim]",
+            f"[bold]jwt-toolkit crack <token> {dest}[/bold]",
+        ),
+    )

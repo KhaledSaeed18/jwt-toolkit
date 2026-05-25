@@ -1,12 +1,9 @@
-import base64
-import binascii
-import json
+import hmac as _hmac
 import math
 import threading
 import time
-import hmac as _hmac
+
 import click
-from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -16,12 +13,17 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
-from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, base64url_encode
-from jwt_toolkit.core.decoder import decode_token, split_token
+
+from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
+from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.decoding import render_algorithm_error, safe_decode
+from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
+from jwt_toolkit.core.encoding import base64_decode_padded, base64url_encode
+from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Crack command — brute-forces a weak HMAC JWT secret against a wordlist.
 
-console = Console()
 
 def _expand_candidates(raw: list[str], encoding: str) -> list[tuple[str, bytes]]:
     # Return (display_label, secret_bytes) pairs expanded by the chosen encoding mode.
@@ -36,15 +38,13 @@ def _expand_candidates(raw: list[str], encoding: str) -> list[tuple[str, bytes]]
                 pass
         if encoding in ("base64", "all"):
             try:
-                padded = c + "=" * (-len(c) % 4)
-                result.append((f"{c} [b64]", base64.b64decode(padded)))
+                result.append((f"{c} [b64]", base64_decode_padded(c)))
             except Exception:
                 pass
     return result
 
 
 def _format_rate(rate: float) -> str:
-    # Scale the rate display to k or M for readability.
     if rate >= 1_000_000:
         return f"{rate / 1_000_000:.1f}M c/s"
     if rate >= 1_000:
@@ -76,227 +76,195 @@ def _format_rate(rate: float) -> str:
     help="Write found secret to this file",
 )
 def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | None):
-    # Brute-force a weak HMAC JWT secret using a wordlist.
-    try:
-        header, _, signature = decode_token(token)
-        header_b64, payload_b64, _ = split_token(token)
-        alg = header.get("alg", "").upper()
+    decoded = safe_decode(token)
 
-        # An empty signature means the token was never HMAC-signed.
-        if not signature:
-            console.print(Panel(
-                "[bold red]Token has an empty signature — nothing to crack[/bold red]\n\n"
-                "[dim]An empty signature is characteristic of an alg:none attack[/dim]\n"
-                "[dim]Use audit to examine the token structure[/dim]",
-                title="Cannot Crack",
-                border_style="red",
-            ))
-            raise SystemExit(2)
-
-        if alg == "NONE":
-            console.print(Panel(
-                "[bold red]Token uses alg: none — there is no signature to crack[/bold red]\n\n"
-                "[dim]An unsigned token can be forged without any secret[/dim]",
-                title="Cannot Crack",
-                border_style="red",
-            ))
-            raise SystemExit(2)
-
-        if alg not in SUPPORTED_ALGORITHMS:
-            console.print(Panel(
-                f"[bold red]Unsupported algorithm: {alg}[/bold red]\n\n"
-                f"[dim]crack only works on HMAC tokens: {', '.join(SUPPORTED_ALGORITHMS)}[/dim]",
-                title="Cannot Crack",
-                border_style="red",
-            ))
-            raise SystemExit(2)
-
-        # Load candidates, skipping blank lines and comments.
-        with open(wordlist, "r", errors="ignore") as f:
-            raw = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-
-        if not raw:
-            console.print(Panel(
-                "[bold red]Wordlist is empty[/bold red]\n\n"
-                f"[dim]File : {wordlist}[/dim]",
-                title="Invalid Wordlist",
-                border_style="red",
-            ))
-            raise SystemExit(2)
-
-        expanded = _expand_candidates(raw, encoding)
-        total = len(expanded)
-        # Cap threads to the number of candidates — no point spawning more.
-        threads = min(threads, total)
-
-        console.print(
-            f"[dim]Algorithm : {alg}   "
-            f"Candidates : {total:,}   "
-            f"Threads : {threads}   "
-            f"Encoding : {encoding}[/dim]"
+    if not decoded.signature:
+        print_error(
+            "Token has an empty signature — nothing to crack",
+            "An empty signature is characteristic of an alg:none attack",
+            "Use audit to examine the token structure",
+            title="Cannot Crack",
         )
+        raise SystemExit(2)
 
-        # Pre-compute signing invariants outside the hot loop.
-        digestmod = SUPPORTED_ALGORITHMS[alg]
-        signing_input = f"{header_b64}.{payload_b64}".encode()
+    try:
+        alg = ensure_hmac_algorithm(decoded.header, action="crack")
+    except UnsupportedAlgorithmError as exc:
+        render_algorithm_error(exc)
+        raise SystemExit(2) from exc
 
-        # Timing-safe comparison — avoids short-circuit leaking the signature length.
-        def _check(sbytes: bytes) -> bool:
-            digest = _hmac.new(sbytes, signing_input, digestmod).digest()
-            return _hmac.compare_digest(base64url_encode(digest), signature)
+    with open(wordlist, "r", errors="ignore") as f:
+        raw = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
-        # Shared state
-        stop_event = threading.Event()
-        lock = threading.Lock()
-        found_box: list[tuple[str, int] | None] = [None]
-        attempts_box: list[int] = [0]
+    if not raw:
+        print_error(
+            "Wordlist is empty",
+            f"File : {wordlist}",
+            title="Invalid Wordlist",
+        )
+        raise SystemExit(2)
 
-        # Each worker scans its slice and stops early if another thread found the secret.
-        def worker(chunk: list[tuple[str, bytes]], offset: int) -> None:
-            local = 0
-            for i, (label, sbytes) in enumerate(chunk):
-                if stop_event.is_set():
-                    break
-                if _check(sbytes):
-                    with lock:
-                        found_box[0] = (label, offset + i)
-                    stop_event.set()
-                    return
-                local += 1
-                # Flush local counter in batches to keep lock contention low.
-                if local % 100 == 0:
-                    with lock:
-                        attempts_box[0] += local
-                    local = 0
-            with lock:
-                attempts_box[0] += local
+    expanded = _expand_candidates(raw, encoding)
+    total = len(expanded)
+    threads = min(threads, total)
 
-        # Launch workers in chunks to keep it simple, no need for a queue here.
-        chunk_size = math.ceil(total / threads)
-        thread_list = [
-            threading.Thread(
-                target=worker,
-                args=(expanded[i : i + chunk_size], i),
-                daemon=True,
-            )
-            for i in range(0, total, chunk_size)
-        ]
+    console.print(
+        f"[dim]Algorithm : {alg}   "
+        f"Candidates : {total:,}   "
+        f"Threads : {threads}   "
+        f"Encoding : {encoding}[/dim]"
+    )
 
-        start = time.perf_counter()
+    result, final_attempts, elapsed = _run_crack(
+        expanded, threads, alg, decoded.header_b64, decoded.payload_b64, decoded.signature
+    )
+    avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
-        # Progress bar is transient — clears itself when cracking finishes.
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TextColumn("[dim]{task.fields[rate]}[/dim]"),
-            TimeElapsedColumn(),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task("Cracking…", total=total, rate="–")
+    if result is not None:
+        _render_found(result, alg, total, elapsed, avg_rate, output)
+        raise SystemExit(1)
+    _render_not_found(alg, final_attempts, elapsed, avg_rate)
 
-            for t in thread_list:
-                t.start()
 
-            prev_attempts = 0
-            prev_time = start
+def _run_crack(
+    expanded: list[tuple[str, bytes]],
+    threads: int,
+    alg: str,
+    header_b64: str,
+    payload_b64: str,
+    signature: str,
+) -> tuple[tuple[str, int] | None, int, float]:
+    # Pre-compute signing invariants outside the hot loop.
+    digestmod = SUPPORTED_ALGORITHMS[alg]
+    signing_input = f"{header_b64}.{payload_b64}".encode()
 
-            # Poll workers every 150ms and refresh the rate display every 400ms.
-            while not stop_event.is_set() and any(t.is_alive() for t in thread_list):
-                time.sleep(0.15)
+    def _check(sbytes: bytes) -> bool:
+        digest = _hmac.new(sbytes, signing_input, digestmod).digest()
+        # compare_digest avoids leaking signature length via short-circuit.
+        return _hmac.compare_digest(base64url_encode(digest), signature)
+
+    stop_event = threading.Event()
+    lock = threading.Lock()
+    found_box: list[tuple[str, int] | None] = [None]
+    attempts_box: list[int] = [0]
+
+    def worker(chunk: list[tuple[str, bytes]], offset: int) -> None:
+        local = 0
+        for i, (label, sbytes) in enumerate(chunk):
+            if stop_event.is_set():
+                break
+            if _check(sbytes):
                 with lock:
-                    done = attempts_box[0]
-
-                now = time.perf_counter()
-                dt = now - prev_time
-                if dt >= 0.4:
-                    rate = (done - prev_attempts) / dt
-                    progress.update(task, completed=done, rate=_format_rate(rate))
-                    prev_attempts = done
-                    prev_time = now
-                else:
-                    progress.update(task, completed=done)
-
-            for t in thread_list:
-                t.join()
-
-        elapsed = time.perf_counter() - start
-
+                    found_box[0] = (label, offset + i)
+                stop_event.set()
+                return
+            local += 1
+            # Flush local counter in batches to keep lock contention low.
+            if local % 100 == 0:
+                with lock:
+                    attempts_box[0] += local
+                local = 0
         with lock:
-            result = found_box[0]
-            final_attempts = attempts_box[0]
+            attempts_box[0] += local
 
-        # Guard against division by zero on instant completion.
-        avg_rate = final_attempts / elapsed if elapsed > 0 else 0
+    total = len(expanded)
+    chunk_size = math.ceil(total / threads)
+    thread_list = [
+        threading.Thread(
+            target=worker,
+            args=(expanded[i : i + chunk_size], i),
+            daemon=True,
+        )
+        for i in range(0, total, chunk_size)
+    ]
 
-        if result is not None:
-            label, idx = result
-            saved_line = ""
-            if output:
-                try:
-                    with open(output, "w") as fout:
-                        fout.write(label + "\n")
-                    saved_line = f"\n[dim]Saved to         : {output}[/dim]"
-                except OSError as exc:
-                    saved_line = f"\n[dim yellow]Could not save: {exc}[/dim yellow]"
+    start = time.perf_counter()
 
-            # Cracked = bad: the secret is dangerously weak.
-            console.print(Panel(
-                f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
-                f"[dim]Algorithm        : {alg}[/dim]\n"
-                f"[dim]Position         : #{idx + 1} of {total:,} candidates[/dim]\n"
-                f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
-                f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
-                f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
-                "[bold red]This secret is in a common wordlist — it is not safe.[/bold red]\n"
-                "[dim]Generate a strong secret with: jwt-toolkit generate-secret[/dim]",
-                title="[bold red]Weak Secret Detected[/bold red]",
-                border_style="red",
-            ))
-            raise SystemExit(1)
-        else:
-            # Not cracked = good: secret is not in this wordlist.
-            console.print(Panel(
-                "[bold green]Secret not found in this wordlist[/bold green]\n\n"
-                f"[dim]Algorithm        : {alg}[/dim]\n"
-                f"[dim]Candidates tried : {final_attempts:,}[/dim]\n"
-                f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
-                f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
-                "[dim]This does not guarantee the secret is strong — a larger[/dim]\n"
-                "[dim]wordlist may still find it. Use jwt-toolkit generate-secret[/dim]\n"
-                "[dim]if you need a cryptographically strong secret.[/dim]",
-                title="[bold green]Wordlist Check Passed[/bold green]",
-                border_style="green",
-            ))
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[dim]{task.fields[rate]}[/dim]"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Cracking…", total=total, rate="–")
 
-    except binascii.Error:
-        console.print(Panel(
-            "[bold red]Token contains invalid base64url encoding[/bold red]\n\n"
-            "[dim]One or more parts could not be decoded[/dim]\n"
-            "[dim]The token may be truncated or corrupted[/dim]",
-            title="Decode Error",
-            border_style="red",
-        ))
-        raise SystemExit(2)
+        for t in thread_list:
+            t.start()
 
-    except json.JSONDecodeError as e:
-        console.print(Panel(
-            "[bold red]Token decoded but header or payload is not valid JSON[/bold red]\n\n"
-            f"[dim]JSON error : {e.msg}[/dim]\n"
-            "[dim]The token structure may be corrupted[/dim]",
-            title="Parse Error",
-            border_style="red",
-        ))
-        raise SystemExit(2)
+        prev_attempts = 0
+        prev_time = start
 
-    except ValueError as e:
-        console.print(Panel(
-            f"[bold red]{e}[/bold red]\n\n"
-            "[dim]A JWT must have exactly 3 base64url parts separated by dots[/dim]\n"
-            "[dim]Format : <header>.<payload>.<signature>[/dim]",
-            title="Invalid Token",
-            border_style="red",
-        ))
-        raise SystemExit(2)
+        # Poll workers every 150ms; refresh rate display every 400ms.
+        while not stop_event.is_set() and any(t.is_alive() for t in thread_list):
+            time.sleep(0.15)
+            with lock:
+                done = attempts_box[0]
+
+            now = time.perf_counter()
+            dt = now - prev_time
+            if dt >= 0.4:
+                rate = (done - prev_attempts) / dt
+                progress.update(task, completed=done, rate=_format_rate(rate))
+                prev_attempts = done
+                prev_time = now
+            else:
+                progress.update(task, completed=done)
+
+        for t in thread_list:
+            t.join()
+
+    elapsed = time.perf_counter() - start
+    with lock:
+        return found_box[0], attempts_box[0], elapsed
+
+
+def _render_found(
+    result: tuple[str, int],
+    alg: str,
+    total: int,
+    elapsed: float,
+    avg_rate: float,
+    output: str | None,
+) -> None:
+    label, idx = result
+    saved_line = ""
+    if output:
+        try:
+            with open(output, "w") as fout:
+                fout.write(label + "\n")
+            saved_line = f"\n[dim]Saved to         : {output}[/dim]"
+        except OSError as exc:
+            saved_line = f"\n[dim yellow]Could not save: {exc}[/dim yellow]"
+
+    # Cracked = bad: the secret is dangerously weak.
+    console.print(Panel(
+        f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
+        f"[dim]Algorithm        : {alg}[/dim]\n"
+        f"[dim]Position         : #{idx + 1} of {total:,} candidates[/dim]\n"
+        f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
+        f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
+        f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
+        "[bold red]This secret is in a common wordlist — it is not safe.[/bold red]\n"
+        "[dim]Generate a strong secret with: jwt-toolkit generate-secret[/dim]",
+        title="[bold red]Weak Secret Detected[/bold red]",
+        border_style="red",
+    ))
+
+
+def _render_not_found(alg: str, attempts: int, elapsed: float, avg_rate: float) -> None:
+    console.print(Panel(
+        "[bold green]Secret not found in this wordlist[/bold green]\n\n"
+        f"[dim]Algorithm        : {alg}[/dim]\n"
+        f"[dim]Candidates tried : {attempts:,}[/dim]\n"
+        f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
+        f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
+        "[dim]This does not guarantee the secret is strong — a larger[/dim]\n"
+        "[dim]wordlist may still find it. Use jwt-toolkit generate-secret[/dim]\n"
+        "[dim]if you need a cryptographically strong secret.[/dim]",
+        title="[bold green]Wordlist Check Passed[/bold green]",
+        border_style="green",
+    ))
