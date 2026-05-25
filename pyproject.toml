@@ -4,12 +4,45 @@ version = "0.1.0"
 description = "A command-line toolkit for inspecting, verifying, cracking, and securing JSON Web Tokens. built to expose how JWT signing works and where it breaks."
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Khaled Saeed", email = "khaled18saeed@gmail.com" }]
+keywords = [
+    "jwt",
+    "json-web-token",
+    "security",
+    "cli",
+    "cryptography",
+    "pentesting",
+    "appsec",
+    "audit",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 dependencies = [
     "click>=8.4.1",
     "cryptography>=48.0.0",
     "pyfiglet>=1.0.2",
     "rich>=15.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/KhaledSaeed18/jwt-toolkit"
+Repository = "https://github.com/KhaledSaeed18/jwt-toolkit"
+Issues = "https://github.com/KhaledSaeed18/jwt-toolkit/issues"
+Changelog = "https://github.com/KhaledSaeed18/jwt-toolkit/releases"
 
 [project.scripts]
 jwt-toolkit = "jwt_toolkit.cli:cli"
