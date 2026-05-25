@@ -22,5 +22,14 @@ class _ConsoleProxy:
     def __getattr__(self, name: str):
         return getattr(self._get(), name)
 
+    # Rich internals (Live, Progress) use the console as a context manager.
+    # Python looks up dunder methods on the type, not the instance, so
+    # __getattr__ alone is not enough — we must forward them explicitly.
+    def __enter__(self):
+        return self._get().__enter__()
+
+    def __exit__(self, *args):
+        return self._get().__exit__(*args)
+
 
 console = _ConsoleProxy()

@@ -1,5 +1,4 @@
 import hmac as _hmac
-import math
 import os
 import threading
 import time
@@ -25,24 +24,59 @@ from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Crack command — brute-forces a weak HMAC JWT secret against a wordlist.
 
+# Items pulled from the generator per lock acquisition — reduces contention
+# on the hot loop without buffering the whole file in memory.
+_BATCH_SIZE = 200
 
-def _expand_candidates(raw: list[str], encoding: str) -> list[tuple[str, bytes]]:
-    # Return (display_label, secret_bytes) pairs expanded by the chosen encoding mode.
-    result: list[tuple[str, bytes]] = []
-    for c in raw:
-        if encoding in ("utf-8", "all"):
-            result.append((c, c.encode("utf-8", errors="replace")))
-        if encoding in ("hex", "all"):
-            try:
-                result.append((f"{c} [hex]", bytes.fromhex(c)))
-            except ValueError:
-                pass
-        if encoding in ("base64", "all"):
-            try:
-                result.append((f"{c} [b64]", base64_decode_padded(c)))
-            except Exception:
-                pass
-    return result
+# Expansion factor used to estimate total candidates before streaming starts.
+_ENCODING_MULTIPLIER = {"utf-8": 1, "hex": 1, "base64": 1, "all": 3}
+
+_DEFAULT_THREADS = min(os.cpu_count() or 4, 8)
+
+
+def _iter_candidates(wordlist_path: str, encoding: str):
+    """Stream (label, secret_bytes) pairs from a wordlist file.
+
+    Handles P2 (no full-file load) and P3 (dedup by bytes) in one pass.
+    """
+    seen: set[bytes] = set()
+    with open(wordlist_path, "r", errors="ignore") as f:
+        for line in f:
+            word = line.strip()
+            if not word or word.startswith("#"):
+                continue
+            if encoding in ("utf-8", "all"):
+                sbytes = word.encode("utf-8", errors="replace")
+                if sbytes not in seen:
+                    seen.add(sbytes)
+                    yield word, sbytes
+            if encoding in ("hex", "all"):
+                try:
+                    sbytes = bytes.fromhex(word)
+                    if sbytes not in seen:
+                        seen.add(sbytes)
+                        yield f"{word} [hex]", sbytes
+                except ValueError:
+                    pass
+            if encoding in ("base64", "all"):
+                try:
+                    sbytes = base64_decode_padded(word)
+                    if sbytes not in seen:
+                        seen.add(sbytes)
+                        yield f"{word} [b64]", sbytes
+                except Exception:
+                    pass
+
+
+def _count_raw_lines(wordlist_path: str) -> int:
+    """Fast pre-scan: count valid (non-empty, non-comment) lines."""
+    count = 0
+    with open(wordlist_path, "r", errors="ignore") as f:
+        for line in f:
+            s = line.strip()
+            if s and not s.startswith("#"):
+                count += 1
+    return count
 
 
 def _format_rate(rate: float) -> str:
@@ -58,10 +92,10 @@ def _format_rate(rate: float) -> str:
 @click.argument("wordlist", type=click.Path(exists=True, readable=True))
 @click.option(
     "--threads",
-    default=4,
+    default=_DEFAULT_THREADS,
     show_default=True,
-    type=click.IntRange(1, 16),
-    help="Worker threads (1–16)",
+    type=click.IntRange(1, 64),
+    help="Worker threads (1–64)",
 )
 @click.option(
     "--encoding",
@@ -95,10 +129,8 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         render_algorithm_error(exc)
         raise SystemExit(2) from exc
 
-    with open(wordlist, "r", errors="ignore") as f:
-        raw = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-
-    if not raw:
+    raw_count = _count_raw_lines(wordlist)
+    if raw_count == 0:
         print_error(
             "Wordlist is empty",
             f"File : {wordlist}",
@@ -106,38 +138,38 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         )
         raise SystemExit(2)
 
-    expanded = _expand_candidates(raw, encoding)
-    total = len(expanded)
-    threads = min(threads, total)
+    total_estimate = raw_count * _ENCODING_MULTIPLIER.get(encoding, 1)
 
     if not os.environ.get("JWT_TOOLKIT_QUIET"):
         console.print(
             f"[dim]Algorithm : {alg}   "
-            f"Candidates : {total:,}   "
+            f"Candidates : ~{total_estimate:,}   "
             f"Threads : {threads}   "
             f"Encoding : {encoding}[/dim]"
         )
 
     result, final_attempts, elapsed = _run_crack(
-        expanded, threads, alg, decoded.header_b64, decoded.payload_b64, decoded.signature
+        wordlist, encoding, total_estimate, threads, alg,
+        decoded.header_b64, decoded.payload_b64, decoded.signature,
     )
     avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
     if result is not None:
-        _render_found(result, alg, total, elapsed, avg_rate, output)
+        _render_found(result, alg, total_estimate, elapsed, avg_rate, output)
         raise SystemExit(1)
     _render_not_found(alg, final_attempts, elapsed, avg_rate)
 
 
 def _run_crack(
-    expanded: list[tuple[str, bytes]],
+    wordlist_path: str,
+    encoding: str,
+    total_estimate: int,
     threads: int,
     alg: str,
     header_b64: str,
     payload_b64: str,
     signature: str,
 ) -> tuple[tuple[str, int] | None, int, float]:
-    # Pre-compute signing invariants outside the hot loop.
     digestmod = SUPPORTED_ALGORITHMS[alg]
     signing_input = f"{header_b64}.{payload_b64}".encode()
 
@@ -146,41 +178,49 @@ def _run_crack(
         # compare_digest avoids leaking signature length via short-circuit.
         return _hmac.compare_digest(base64url_encode(digest), signature)
 
+    gen = _iter_candidates(wordlist_path, encoding)
+    gen_lock = threading.Lock()
+    position_counter: list[int] = [0]
     stop_event = threading.Event()
     lock = threading.Lock()
     found_box: list[tuple[str, int] | None] = [None]
     attempts_box: list[int] = [0]
 
-    def worker(chunk: list[tuple[str, bytes]], offset: int) -> None:
-        local = 0
-        for i, (label, sbytes) in enumerate(chunk):
-            if stop_event.is_set():
+    def worker() -> None:
+        local_attempts = 0
+        while not stop_event.is_set():
+            # Pull a batch under a single lock acquisition to keep contention low.
+            with gen_lock:
+                batch: list[tuple[int, tuple[str, bytes]]] = []
+                for _ in range(_BATCH_SIZE):
+                    item = next(gen, None)
+                    if item is None:
+                        break
+                    pos = position_counter[0]
+                    position_counter[0] += 1
+                    batch.append((pos, item))  # type: ignore[arg-type]
+            if not batch:
                 break
-            if _check(sbytes):
-                with lock:
-                    found_box[0] = (label, offset + i)
-                stop_event.set()
-                return
-            local += 1
-            # Flush local counter in batches to keep lock contention low.
-            if local % 100 == 0:
-                with lock:
-                    attempts_box[0] += local
-                local = 0
+            for pos, (label, sbytes) in batch:
+                if stop_event.is_set():
+                    break
+                if _check(sbytes):
+                    with lock:
+                        found_box[0] = (label, pos)
+                    stop_event.set()
+                    break
+                local_attempts += 1
+                if local_attempts % 500 == 0:
+                    with lock:
+                        attempts_box[0] += local_attempts
+                    local_attempts = 0
         with lock:
-            attempts_box[0] += local
+            attempts_box[0] += local_attempts
 
-    total = len(expanded)
-    chunk_size = math.ceil(total / threads)
     thread_list = [
-        threading.Thread(
-            target=worker,
-            args=(expanded[i : i + chunk_size], i),
-            daemon=True,
-        )
-        for i in range(0, total, chunk_size)
+        threading.Thread(target=worker, daemon=True)
+        for _ in range(threads)
     ]
-
     start = time.perf_counter()
 
     with Progress(
@@ -193,7 +233,7 @@ def _run_crack(
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task("Cracking…", total=total, rate="–")
+        task = progress.add_task("Cracking…", total=total_estimate, rate="–")
 
         for t in thread_list:
             t.start()
@@ -228,7 +268,7 @@ def _run_crack(
 def _render_found(
     result: tuple[str, int],
     alg: str,
-    total: int,
+    total_estimate: int,
     elapsed: float,
     avg_rate: float,
     output: str | None,
@@ -247,7 +287,7 @@ def _render_found(
     console.print(Panel(
         f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
         f"[dim]Algorithm        : {alg}[/dim]\n"
-        f"[dim]Position         : #{idx + 1} of {total:,} candidates[/dim]\n"
+        f"[dim]Position         : #{idx + 1} of ~{total_estimate:,} candidates[/dim]\n"
         f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
         f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
         f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
