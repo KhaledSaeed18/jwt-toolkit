@@ -2,7 +2,7 @@ import hmac
 import hashlib
 import base64
 
-# Crypto module to handle signing and verifying JWT tokens using HMAC with various hashing algorithms (HS256, HS384, HS512).
+# Crypto module — HMAC signing and verification for HS256/HS384/HS512 tokens.
 
 # Define a mapping of supported algorithms to their corresponding hashlib functions for HMAC signing and verification.
 SUPPORTED_ALGORITHMS = {
@@ -20,6 +20,7 @@ def sign(header_b64: str, payload_b64: str, secret: str, alg: str = "HS256") -> 
     digestmod = SUPPORTED_ALGORITHMS.get(alg.upper())
     if digestmod is None:
         raise ValueError(f"Unsupported algorithm: {alg}. Supported: {', '.join(SUPPORTED_ALGORITHMS)}")
+    # Signing input is exactly header_b64 + "." + payload_b64 as defined by the JWT spec.
     message = f"{header_b64}.{payload_b64}".encode()
     signature = hmac.new(secret.encode(), message, digestmod).digest()
     return base64url_encode(signature)
@@ -27,4 +28,5 @@ def sign(header_b64: str, payload_b64: str, secret: str, alg: str = "HS256") -> 
 # Function to verify the signature of a JWT token by comparing the expected signature (generated using the same header, payload, secret, and algorithm) with the provided signature in a way that is resistant to timing attacks using hmac.compare_digest.
 def verify_signature(header_b64: str, payload_b64: str, signature: str, secret: str, alg: str = "HS256") -> bool:
     expected = sign(header_b64, payload_b64, secret, alg)
+    # compare_digest is timing-safe — unlike ==, it doesn't short-circuit on the first mismatched byte.
     return hmac.compare_digest(expected, signature)
