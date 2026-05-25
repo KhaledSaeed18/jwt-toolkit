@@ -43,7 +43,7 @@ def _strength_for(bits: int) -> str:
     return "weak, use at least 128 bits"
 
 
-@click.command()
+@click.command(help="Generate a cryptographically strong random secret for signing JWTs.")
 @click.option("--bits", default=256, show_default=True, help="Secret length in bits (must be a multiple of 8)")
 @click.option("--encoding", type=click.Choice(["hex", "base64"]), default="hex", show_default=True, help="Output encoding")
 def generate_secret(bits: int, encoding: str):

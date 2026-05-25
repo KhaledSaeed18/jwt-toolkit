@@ -20,7 +20,7 @@ RESULT_COLORS = {
 }
 
 
-@click.command()
+@click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iss, aud).")
 @click.argument("token")
 @click.option("--secret", required=True, help="The HMAC secret to verify against")
 @click.option("--issuer", default=None, help="Expected issuer (iss claim)")
