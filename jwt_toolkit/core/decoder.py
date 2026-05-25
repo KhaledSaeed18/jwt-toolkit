@@ -5,7 +5,7 @@ import json
 
 # Splits a JWT token into its header, payload, and signature components.
 def split_token(token: str) -> tuple[str, str, str]:
-    parts = token.strip().split(".")
+    parts = "".join(token.split()).split(".")
     if len(parts) != 3:
         raise ValueError(f"Invalid JWT structure: expected 3 parts, got {len(parts)}")
     return parts[0], parts[1], parts[2]
