@@ -1,3 +1,4 @@
+import hashlib
 import ssl
 import urllib.error
 import urllib.request
@@ -26,12 +27,21 @@ _WORDLIST_URL = (
 )
 _FILENAME = "common-secrets.txt"
 
+# SHA-256 of the bundled wordlist at _WORDLIST_URL. Verified against local copy.
+# Only used when downloading from the default URL; custom --source URLs skip this check.
+_WORDLIST_SHA256 = "1b4bae820e98073b7148412425ea27e00cd1c4d0900ad446bdae146665ea758a"
+
 
 def _open_url(url: str):
-    # Fall back to an unverified context on macOS cert issues.
     try:
         return urllib.request.urlopen(url, timeout=30)
     except ssl.SSLCertVerificationError:
+        console.print(
+            "[bold yellow]WARNING[/bold yellow]: TLS certificate verification failed for "
+            f"[dim]{url}[/dim]. Continuing with an unverified connection — "
+            "the download cannot be authenticated by TLS. "
+            "Check your CA bundle or use a trusted network.",
+        )
         ctx = ssl._create_unverified_context()
         return urllib.request.urlopen(url, context=ctx, timeout=30)
 
@@ -77,6 +87,14 @@ def _download(url: str, dest: Path) -> int:
     return written
 
 
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65_536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _count_lines(path: Path) -> int:
     count = 0
     with open(path, "rb") as f:
@@ -114,7 +132,19 @@ def _fmt_bytes(n: int) -> str:
     default=False,
     help="Overwrite existing file without prompting",
 )
-def download_wordlists(output_dir: str, force: bool):
+@click.option(
+    "--source",
+    default=None,
+    metavar="URL",
+    help=(
+        "Custom URL to download from instead of the default jwt-toolkit repository. "
+        "Integrity verification is skipped for custom sources."
+    ),
+)
+def download_wordlists(output_dir: str, force: bool, source: str | None):
+    url = source or _WORDLIST_URL
+    verify_integrity = source is None
+
     dest_dir = Path(output_dir).resolve()
 
     try:
@@ -138,10 +168,12 @@ def download_wordlists(output_dir: str, force: bool):
         )
         return
 
-    console.print(f"[dim]Saving to : {dest}[/dim]")
+    if source:
+        console.print(f"[dim]Source   : {url}[/dim]")
+    console.print(f"[dim]Saving to: {dest}[/dim]")
 
     try:
-        written = _download(_WORDLIST_URL, dest)
+        written = _download(url, dest)
     except click.ClickException:
         raise
     except OSError as exc:
@@ -153,6 +185,22 @@ def download_wordlists(output_dir: str, force: bool):
         )
         raise SystemExit(2)
 
+    if verify_integrity:
+        actual = _sha256(dest)
+        if actual != _WORDLIST_SHA256:
+            dest.unlink(missing_ok=True)
+            print_error(
+                "Integrity check failed — file deleted",
+                f"Expected : {_WORDLIST_SHA256}",
+                f"Got      : {actual}",
+                "The downloaded file does not match the pinned checksum.",
+                "This may indicate a compromised source or a wordlist update.",
+                "If the wordlist was intentionally updated, report this at "
+                "https://github.com/KhaledSaeed18/jwt-toolkit/issues",
+                title="Integrity Error",
+            )
+            raise SystemExit(2)
+
     lines = _count_lines(dest)
 
     print_success(
@@ -160,6 +208,7 @@ def download_wordlists(output_dir: str, force: bool):
         f"Saved to : {dest}",
         f"Size     : {_fmt_bytes(written)}",
         f"Entries  : {lines:,} lines",
+        *([f"Checksum : {_WORDLIST_SHA256}  ✓"] if verify_integrity else []),
         title="[bold green]Downloaded[/bold green]",
         footer=(
             "[dim]Use with crack:[/dim]",

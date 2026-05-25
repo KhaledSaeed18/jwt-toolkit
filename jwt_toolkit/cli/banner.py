@@ -46,7 +46,7 @@ _ACCENT = "bright_cyan"
 _DIM = "grey50"
 
 _SUBTITLE = "JWT Security Toolkit"
-_TAGLINE = "Audit · Verify · Crack · Generate"
+_TAGLINE = "Decode · Sign · Audit · Verify · Crack · Generate"
 _REPO_URL = "https://github.com/KhaledSaeed18/jwt-toolkit"
 
 # Plain-ASCII fallback shown when pyfiglet is unavailable or every font is
@@ -159,6 +159,8 @@ def render_banner(
 
 # help layout
 _COMMANDS: tuple[tuple[str, str], ...] = (
+    ("decode",             "Decode a JWT and pretty-print its header and payload."),
+    ("sign",               "Mint a new JWT from a payload and HMAC secret."),
     ("audit",              "Static security analysis of a JWT — no key required."),
     ("verify",             "Verify a JWT's signature and standard claims."),
     ("crack",              "Brute-force a weak HMAC secret using a wordlist."),
@@ -167,6 +169,8 @@ _COMMANDS: tuple[tuple[str, str], ...] = (
 )
 
 _EXAMPLES: tuple[tuple[str, str], ...] = (
+    ("decode a token",            "jwt-toolkit decode <token>"),
+    ("mint a new token",          "jwt-toolkit sign --payload '{\"sub\":\"1\"}' --secret <secret>"),
     ("audit a token",             "jwt-toolkit audit <token>"),
     ("strict + JSON report",      "jwt-toolkit audit <token> --strict --json"),
     ("verify signature & claims", "jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com"),

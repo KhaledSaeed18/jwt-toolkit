@@ -4,8 +4,10 @@ import click
 from jwt_toolkit.cli.banner import render_banner, render_help
 from jwt_toolkit.commands.audit import audit
 from jwt_toolkit.commands.crack import crack
+from jwt_toolkit.commands.decode import decode
 from jwt_toolkit.commands.download_wordlists import download_wordlists
 from jwt_toolkit.commands.generate_secret import generate_secret
+from jwt_toolkit.commands.sign import sign
 from jwt_toolkit.commands.verify import verify
 
 try:
@@ -24,6 +26,8 @@ cryptographically strong secrets.
 
 \b
 Commands:
+  decode              Decode a JWT and pretty-print its header and payload.
+  sign                Mint a new JWT from a payload and HMAC secret.
   audit               Static security analysis of a JWT (no key required).
   verify              Verify the signature and standard claims of a JWT.
   crack               Brute-force a weak HMAC secret using a wordlist.
@@ -32,6 +36,8 @@ Commands:
 
 \b
 Examples:
+  jwt-toolkit decode <token>
+  jwt-toolkit sign --payload '{"sub":"1"}' --secret mysecret
   jwt-toolkit audit <token>
   jwt-toolkit audit <token> --strict --json
   jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com
@@ -86,6 +92,8 @@ def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool):
             render_banner()
         render_help()
 
+cli.add_command(decode)
+cli.add_command(sign)
 cli.add_command(audit)
 cli.add_command(generate_secret)
 cli.add_command(verify)
