@@ -45,6 +45,7 @@ def _expand_candidates(raw: list[str], encoding: str) -> list[tuple[str, bytes]]
 
 
 def _format_rate(rate: float) -> str:
+    # Scale the rate display to k or M for readability.
     if rate >= 1_000_000:
         return f"{rate / 1_000_000:.1f}M c/s"
     if rate >= 1_000:
@@ -82,6 +83,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         header_b64, payload_b64, _ = split_token(token)
         alg = header.get("alg", "").upper()
 
+        # An empty signature means the token was never HMAC-signed.
         if not signature:
             console.print(Panel(
                 "[bold red]Token has an empty signature — nothing to crack[/bold red]\n\n"
@@ -110,6 +112,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
             ))
             raise SystemExit(2)
 
+        # Load candidates, skipping blank lines and comments.
         with open(wordlist, "r", errors="ignore") as f:
             raw = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
@@ -124,6 +127,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
 
         expanded = _expand_candidates(raw, encoding)
         total = len(expanded)
+        # Cap threads to the number of candidates — no point spawning more.
         threads = min(threads, total)
 
         console.print(
@@ -137,6 +141,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         digestmod = SUPPORTED_ALGORITHMS[alg]
         signing_input = f"{header_b64}.{payload_b64}".encode()
 
+        # Timing-safe comparison — avoids short-circuit leaking the signature length.
         def _check(sbytes: bytes) -> bool:
             digest = _hmac.new(sbytes, signing_input, digestmod).digest()
             return _hmac.compare_digest(base64url_encode(digest), signature)
@@ -147,6 +152,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         found_box: list[tuple[str, int] | None] = [None]
         attempts_box: list[int] = [0]
 
+        # Each worker scans its slice and stops early if another thread found the secret.
         def worker(chunk: list[tuple[str, bytes]], offset: int) -> None:
             local = 0
             for i, (label, sbytes) in enumerate(chunk):
@@ -179,6 +185,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
 
         start = time.perf_counter()
 
+        # Progress bar is transient — clears itself when cracking finishes.
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -197,6 +204,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
             prev_attempts = 0
             prev_time = start
 
+            # Poll workers every 150ms and refresh the rate display every 400ms.
             while not stop_event.is_set() and any(t.is_alive() for t in thread_list):
                 time.sleep(0.15)
                 with lock:
@@ -221,6 +229,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
             result = found_box[0]
             final_attempts = attempts_box[0]
 
+        # Guard against division by zero on instant completion.
         avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
         if result is not None:
