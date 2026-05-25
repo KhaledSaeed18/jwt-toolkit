@@ -17,9 +17,13 @@ from jwt_toolkit.cli.decoding import (
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
+from jwt_toolkit.core.jwks import resolve_jwks_key
 
 # Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
-# Accepts an HMAC secret for HS* tokens or a PEM public key for RS*/PS*/ES* tokens.
+# Three key-source modes, mutually exclusive:
+#   --secret      HMAC secret (HS* tokens)
+#   --public-key  PEM public key (RS*/PS*/ES* tokens)
+#   --jwks-url    JWKS endpoint or file:// path; key resolved by the token's kid
 
 RESULT_COLORS = {
     "PASS": "bold green",
@@ -45,6 +49,15 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
     help="Path to a PEM-encoded public key (RS*/PS*/ES*). Mutually exclusive with --secret.",
 )
+@click.option(
+    "--jwks-url",
+    "jwks_url",
+    default=None,
+    help=(
+        "JWKS endpoint (https://, http://, or file://). The token's kid header "
+        "selects the verification key. Mutually exclusive with --secret/--public-key."
+    ),
+)
 @click.option("--issuer", default=None, help="Expected issuer (iss claim)")
 @click.option("--audience", default=None, help="Expected audience (aud claim)")
 @click.option(
@@ -64,6 +77,7 @@ def verify(
     token: str,
     secret: str | None,
     public_key_path: Path | None,
+    jwks_url: str | None,
     issuer: str | None,
     audience: str | None,
     leeway: int,
@@ -78,13 +92,19 @@ def verify(
         render_algorithm_error(exc)
         raise SystemExit(2) from exc
 
-    _validate_key_inputs(alg, secret=secret, public_key_path=public_key_path)
+    _validate_key_inputs(alg, secret=secret, public_key_path=public_key_path, jwks_url=jwks_url)
 
     rows: list[tuple[str, str, str]] = []
     failed = False
 
     try:
-        sig_valid = _verify_signature(decoded, alg, secret=secret, public_key_path=public_key_path)
+        sig_valid = _verify_signature(
+            decoded,
+            alg,
+            secret=secret,
+            public_key_path=public_key_path,
+            jwks_url=jwks_url,
+        )
     except ValueError as exc:
         print_error(
             "Could not verify signature with the provided key",
@@ -111,14 +131,30 @@ def verify(
         _render_results(rows, failed=failed)
 
 
-def _validate_key_inputs(alg: str, *, secret: str | None, public_key_path: Path | None) -> None:
-    if secret is not None and public_key_path is not None:
+def _validate_key_inputs(
+    alg: str,
+    *,
+    secret: str | None,
+    public_key_path: Path | None,
+    jwks_url: str | None,
+) -> None:
+    # Enforce exactly-one key source. Counting truthy options is clearer than
+    # nested pairwise checks once a third mode enters the picture.
+    sources = sum(x is not None for x in (secret, public_key_path, jwks_url))
+    if sources > 1:
         print_error(
-            "Pass either --secret or --public-key, not both",
+            "Pass only one of --secret, --public-key, or --jwks-url",
             title="Invalid Input",
         )
         raise SystemExit(2)
+
     if is_hmac(alg):
+        if jwks_url is not None or public_key_path is not None:
+            print_error(
+                f"{alg} is an HMAC algorithm — use --secret",
+                title="Invalid Input",
+            )
+            raise SystemExit(2)
         if not secret:
             print_error(
                 f"{alg} requires --secret",
@@ -127,24 +163,40 @@ def _validate_key_inputs(alg: str, *, secret: str | None, public_key_path: Path 
             )
             raise SystemExit(2)
         return
-    # Asymmetric path.
-    if public_key_path is None:
+
+    # Asymmetric path — accept either a PEM file or a JWKS URL.
+    if public_key_path is None and jwks_url is None:
         print_error(
-            f"{alg} requires --public-key",
-            "Provide a PEM-encoded public key (SubjectPublicKeyInfo).",
+            f"{alg} requires --public-key or --jwks-url",
+            "Provide a PEM-encoded public key, or a JWKS endpoint the token's kid resolves against.",
+            title="Invalid Input",
+        )
+        raise SystemExit(2)
+    if secret is not None:
+        print_error(
+            f"{alg} is an asymmetric algorithm — use --public-key or --jwks-url, not --secret",
             title="Invalid Input",
         )
         raise SystemExit(2)
 
 
 def _verify_signature(
-    decoded, alg: str, *, secret: str | None, public_key_path: Path | None
+    decoded,
+    alg: str,
+    *,
+    secret: str | None,
+    public_key_path: Path | None,
+    jwks_url: str | None,
 ) -> bool:
     if is_hmac(alg):
         return verify_signature(
             decoded.header_b64, decoded.payload_b64, decoded.signature, secret or "", alg
         )
-    pem_bytes = public_key_path.read_bytes()  # type: ignore[union-attr]
+    if jwks_url is not None:
+        kid = decoded.header.get("kid")
+        pem_bytes = resolve_jwks_key(jwks_url, kid=kid, alg=alg)
+    else:
+        pem_bytes = public_key_path.read_bytes()  # type: ignore[union-attr]
     return verify_asymmetric(
         decoded.header_b64, decoded.payload_b64, decoded.signature, pem_bytes, alg
     )

@@ -4,6 +4,7 @@ import time
 import pytest
 from cryptography.hazmat.primitives import serialization as _s
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from jwt_toolkit.cli import cli
 from jwt_toolkit.core.crypto import sign_asymmetric
@@ -204,4 +205,133 @@ def test_asymmetric_curve_mismatch_exits_2(runner, tmp_path, keypair_for):
     pub.write_bytes(es384_kp.public_pem)
     token = _asymmetric_token({"sub": "1", "exp": 9999999999}, "ES256", es256_kp.private_pem)
     result = invoke(runner, token, "--public-key", str(pub))
+    assert result.exit_code == 2
+
+
+# JWKS verification — file:// URL keeps tests offline
+
+
+def _b64_int(n: int) -> str:
+    length = (n.bit_length() + 7) // 8 or 1
+    return base64url_encode(n.to_bytes(length, "big"))
+
+
+def _rsa_jwk_for(public_pem: bytes, *, kid: str | None = None) -> dict:
+    pub = load_pem_public_key(public_pem)
+    nums = pub.public_numbers()
+    jwk = {"kty": "RSA", "n": _b64_int(nums.n), "e": _b64_int(nums.e)}
+    if kid is not None:
+        jwk["kid"] = kid
+    return jwk
+
+
+def _write_jwks_file(tmp_path, payload) -> str:
+    path = tmp_path / "jwks.json"
+    path.write_text(json.dumps(payload))
+    return path.as_uri()
+
+
+def _asymmetric_token_with_kid(
+    payload: dict, alg: str, private_pem: bytes, *, kid: str | None
+) -> str:
+    header: dict = {"alg": alg, "typ": "JWT"}
+    if kid is not None:
+        header["kid"] = kid
+    h = base64url_encode(json.dumps(header, separators=(",", ":")).encode())
+    p = base64url_encode(json.dumps(payload, separators=(",", ":")).encode())
+    sig = sign_asymmetric(h, p, private_pem, alg)
+    return f"{h}.{p}.{sig}"
+
+
+def test_jwks_url_with_matching_kid_verifies(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem, kid="k1")]})
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid="k1"
+    )
+    result = invoke(runner, token, "--jwks-url", url)
+    assert result.exit_code == 0, result.output
+
+
+def test_jwks_url_with_wrong_kid_exits_2(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem, kid="k1")]})
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid="unknown"
+    )
+    result = invoke(runner, token, "--jwks-url", url)
+    assert result.exit_code == 2
+
+
+def test_jwks_url_with_no_kid_and_single_key_verifies(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem)]})
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid=None
+    )
+    result = invoke(runner, token, "--jwks-url", url)
+    assert result.exit_code == 0, result.output
+
+
+def test_jwks_url_with_no_kid_and_multiple_keys_exits_2(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(
+        tmp_path,
+        {"keys": [_rsa_jwk_for(kp.public_pem), _rsa_jwk_for(kp.public_pem)]},
+    )
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid=None
+    )
+    result = invoke(runner, token, "--jwks-url", url)
+    assert result.exit_code == 2
+
+
+def test_jwks_url_with_signed_by_other_key_exits_1(runner, tmp_path, keypair_for):
+    # JWKS contains key A; token signed by key B but kid points at A → sig fails.
+    kp_a = keypair_for("RS256")
+    other = rsa.generate_private_key(65537, 2048)
+    other_priv = other.private_bytes(_s.Encoding.PEM, _s.PrivateFormat.PKCS8, _s.NoEncryption())
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp_a.public_pem, kid="k1")]})
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", other_priv, kid="k1"
+    )
+    result = invoke(runner, token, "--jwks-url", url)
+    assert result.exit_code == 1
+
+
+def test_jwks_url_for_hmac_token_exits_2(runner, tmp_path, keypair_for, valid_token):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem)]})
+    result = invoke(runner, valid_token, "--jwks-url", url)
+    assert result.exit_code == 2
+
+
+def test_jwks_url_mutually_exclusive_with_secret(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem)]})
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid=None
+    )
+    result = invoke(runner, token, "--jwks-url", url, "--secret", "x")
+    assert result.exit_code == 2
+
+
+def test_jwks_url_mutually_exclusive_with_public_key(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem)]})
+    pub_file = tmp_path / "pub.pem"
+    pub_file.write_bytes(kp.public_pem)
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid=None
+    )
+    result = invoke(runner, token, "--jwks-url", url, "--public-key", str(pub_file))
+    assert result.exit_code == 2
+
+
+def test_jwks_url_unreachable_exits_2(runner, keypair_for):
+    kp = keypair_for("RS256")
+    token = _asymmetric_token_with_kid(
+        {"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem, kid=None
+    )
+    result = invoke(runner, token, "--jwks-url", "file:///nonexistent/jwks.json")
     assert result.exit_code == 2

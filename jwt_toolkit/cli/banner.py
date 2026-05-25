@@ -175,6 +175,10 @@ _EXAMPLES: tuple[tuple[str, str], ...] = (
         "jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com",
     ),
     (
+        "verify against a JWKS",
+        "jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json",
+    ),
+    (
         "forge defensive test cases",
         "jwt-toolkit forge <token> --public-key key.pub.pem",
     ),

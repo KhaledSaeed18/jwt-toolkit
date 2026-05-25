@@ -45,6 +45,7 @@ Examples:
   jwt-toolkit audit <token>
   jwt-toolkit audit <token> --strict --json
   jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com
+  jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json
   jwt-toolkit forge <token> --public-key key.pub.pem
   jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8
   jwt-toolkit generate-secret --bits 256 --encoding base64
