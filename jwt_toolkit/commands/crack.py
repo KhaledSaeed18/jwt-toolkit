@@ -65,7 +65,8 @@ def _iter_candidates(wordlist_path: str, encoding: str):
                     if sbytes not in seen:
                         seen.add(sbytes)
                         yield f"{word} [b64]", sbytes
-                except Exception:
+                # Invalid base64; skip and try next candidate.
+                except Exception:  # nosec B110
                     pass
 
 

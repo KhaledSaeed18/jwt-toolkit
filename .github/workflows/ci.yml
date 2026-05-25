@@ -36,6 +36,20 @@ jobs:
       - run: uv sync --group dev
       - run: uv run mypy
 
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --group dev
+      - name: Bandit static analysis
+        run: uv run bandit -c pyproject.toml -r jwt_toolkit --severity-level medium
+      - name: pip-audit dependency CVEs
+        run: uv run pip-audit
+
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

@@ -27,5 +27,14 @@ repos:
       - id: ruff
         args: ["--fix"]
 
-  # Mypy runs in CI rather than pre-commit by default — it's slow on cold cache
-  # and blocks commits in a way contributors find frustrating. CI is the gate.
+  # Bandit static security scan. Source-only, no network — safe to run on commit.
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.6
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml", "--severity-level", "medium"]
+        additional_dependencies: ["bandit[toml]"]
+        files: ^jwt_toolkit/
+
+  # Mypy and pip-audit run in CI rather than pre-commit:
+  # mypy is slow on cold cache, pip-audit needs network.

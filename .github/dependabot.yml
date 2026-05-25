@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # All Python dependencies (runtime + dev) bundled into a single weekly PR.
+  # Major versions are split out so they get a deliberate review instead of silently riding along with patch bumps.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 1
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # GitHub Actions pin updates bundled into a single weekly PR.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
