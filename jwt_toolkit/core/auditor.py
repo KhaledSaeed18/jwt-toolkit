@@ -33,7 +33,9 @@ _KEY_SMUGGLING_HEADERS = ("jwk", "jku", "x5u", "x5c")
 
 # Characters that have caused real-world `kid` injection bugs
 # (path traversal, SQLi, command injection, null-byte truncation).
-_KID_DANGEROUS_CHARS = ("..", "/", "\\", "\x00", "'", '"', ";", "`", "$(")
+# "/" is intentionally excluded — it is a legitimate path separator in
+# key IDs like "prod-key/v1"; ".." already catches actual path traversal.
+_KID_DANGEROUS_CHARS = ("..", "\\", "\x00", "'", '"', ";", "`", "$(")
 
 # Acceptable `typ` values per RFC 7519 / RFC 9068 (access tokens).
 _VALID_TYP_VALUES = {"JWT", "AT+JWT"}
@@ -90,8 +92,16 @@ class Report:
 # Public entry point. The command layer should only ever call this — never the
 # individual `_audit_*` helpers or `audit()` directly — so grading and sorting
 # stay in lockstep with the findings.
-def run_audit(header: dict, payload: dict) -> Report:
-    findings = tuple(sorted(audit(header, payload), key=_finding_sort_key))
+def run_audit(
+    header: dict,
+    payload: dict,
+    *,
+    required_claims: frozenset[str] = frozenset(),
+) -> Report:
+    findings = tuple(sorted(
+        audit(header, payload, required_claims=required_claims),
+        key=_finding_sort_key,
+    ))
     return Report(
         findings=findings,
         grade=_grade(findings),
@@ -100,7 +110,12 @@ def run_audit(header: dict, payload: dict) -> Report:
 
 
 # Legacy in-module entry point. Kept because `run_audit` composes it.
-def audit(header: dict, payload: dict) -> list[Finding]:
+def audit(
+    header: dict,
+    payload: dict,
+    *,
+    required_claims: frozenset[str] = frozenset(),
+) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(_audit_algorithm(header))
     findings.extend(_audit_typ(header))
@@ -110,13 +125,13 @@ def audit(header: dict, payload: dict) -> list[Finding]:
     findings.extend(_audit_nbf(payload))
     findings.extend(_audit_iat(payload))
     findings.extend(_audit_jti(payload))
-    findings.extend(_audit_claims(payload))
+    findings.extend(_audit_claims(payload, required_claims=required_claims))
     findings.extend(_audit_sensitive_fields(payload))
     findings.extend(_audit_sensitive_values(payload))
     return findings
 
 
-# --- Grading ----------------------------------------------------------------
+# Grading
 
 # Single source of truth for grade boundaries. `--strict` lives at the command
 # layer; this function never sees it.
@@ -180,7 +195,7 @@ def _audit_typ(header: dict) -> list[Finding]:
         return [Finding(Severity.PASS, "typ", f"typ={header['typ']}")]
     return [Finding(
         Severity.WARN, "typ",
-        f"Unexpected typ value: {header['typ']!r}",
+        f"Unexpected typ value: {typ!r}",
         "Set typ to 'JWT' or 'at+jwt' so verifiers can reject unrelated tokens.",
     )]
 
@@ -310,12 +325,17 @@ def _audit_jti(payload: dict) -> list[Finding]:
     return []
 
 
-def _audit_claims(payload: dict) -> list[Finding]:
-    return [
-        Finding(Severity.INFO, claim, f"Missing {claim} claim")
-        for claim in ("iss", "aud", "iat")
-        if claim not in payload
-    ]
+def _audit_claims(
+    payload: dict,
+    *,
+    required_claims: frozenset[str] = frozenset(),
+) -> list[Finding]:
+    findings = []
+    for claim in ("iss", "aud", "iat"):
+        if claim not in payload:
+            severity = Severity.WARN if claim in required_claims else Severity.INFO
+            findings.append(Finding(severity, claim, f"Missing {claim} claim"))
+    return findings
 
 
 def _audit_sensitive_fields(payload: dict) -> list[Finding]:
@@ -334,31 +354,43 @@ def _audit_sensitive_values(payload: dict) -> list[Finding]:
     # Walks nested dicts/lists looking for values that *look* like PII even when
     # the surrounding field name doesn't tip us off. Top-level keys already
     # caught by _audit_sensitive_fields are skipped to avoid duplicate findings.
-    findings: list[Finding] = []
+    # Multiple hits of the same type are grouped into one finding to keep the
+    # report readable when a payload has many PII fields.
+    email_paths: list[str] = []
+    card_paths: list[str] = []
     seen_paths: set[str] = set()
     skip_roots = {key for key in payload if key.lower() in SENSITIVE_FIELDS}
+
     for path, value in _walk(payload):
         root = path.split(".", 1)[0].split("[", 1)[0]
-        if root in skip_roots:
-            continue
-        if path in seen_paths:
-            continue
-        if not isinstance(value, str):
+        if root in skip_roots or path in seen_paths or not isinstance(value, str):
             continue
         if _EMAIL_RE.match(value):
-            findings.append(Finding(
-                Severity.WARN, path,
-                "Value looks like an email address",
-                "Avoid embedding PII in JWT payloads; use an opaque subject identifier.",
-            ))
+            email_paths.append(path)
             seen_paths.add(path)
         elif _DIGITS_ONLY_RE.match(value) and _looks_like_card(value):
-            findings.append(Finding(
-                Severity.CRITICAL, path,
-                "Value looks like a credit-card number (passes Luhn check)",
-                "Never place card data in a JWT — it is base64, not encryption.",
-            ))
+            card_paths.append(path)
             seen_paths.add(path)
+
+    findings: list[Finding] = []
+    if email_paths:
+        label = "paths" if len(email_paths) > 1 else "path"
+        findings.append(Finding(
+            Severity.WARN,
+            "payload",
+            f"Email-like value{'' if len(email_paths) == 1 else 's'} at {label}: "
+            + ", ".join(email_paths),
+            "Avoid embedding PII in JWT payloads; use an opaque subject identifier.",
+        ))
+    if card_paths:
+        label = "paths" if len(card_paths) > 1 else "path"
+        findings.append(Finding(
+            Severity.CRITICAL,
+            "payload",
+            f"Credit-card-like value{'' if len(card_paths) == 1 else 's'} "
+            f"(Luhn-valid) at {label}: " + ", ".join(card_paths),
+            "Never place card data in a JWT — it is base64, not encryption.",
+        ))
     return findings
 
 

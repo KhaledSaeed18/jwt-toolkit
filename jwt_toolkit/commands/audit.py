@@ -48,10 +48,21 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     default=None,
     help="HMAC secret — when provided, signature verification is included in the report.",
 )
-def audit(token: str, strict: bool, as_json: bool, secret: str | None):
+@click.option(
+    "--require",
+    "required_claims",
+    default="",
+    metavar="CLAIMS",
+    help=(
+        "Comma-separated claims to require (e.g. iss,aud). "
+        "Missing required claims are flagged WARN instead of INFO."
+    ),
+)
+def audit(token: str, strict: bool, as_json: bool, secret: str | None, required_claims: str):
     token = resolve_token(token)
     decoded = safe_decode(token, as_json=as_json)
-    report = run_audit(decoded.header, decoded.payload)
+    required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
+    report = run_audit(decoded.header, decoded.payload, required_claims=required)
     exit_code = _resolve_exit_code(report, strict=strict)
 
     sig_result: tuple[bool, str] | None = None
