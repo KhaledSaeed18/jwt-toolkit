@@ -1,11 +1,12 @@
 import json
 import time
+from pathlib import Path
 
 import click
 from rich.panel import Panel
 from rich.table import Table
 
-from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
+from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import (
     JSON_SCHEMA_VERSION,
@@ -14,10 +15,11 @@ from jwt_toolkit.cli.decoding import (
     safe_decode,
 )
 from jwt_toolkit.cli.panels import print_error
-from jwt_toolkit.core.crypto import verify_signature
+from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
+# Accepts an HMAC secret for HS* tokens or a PEM public key for RS*/PS*/ES* tokens.
 
 RESULT_COLORS = {
     "PASS": "bold green",
@@ -31,7 +33,18 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
 
 @click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iat, iss, aud).")
 @click.argument("token")
-@click.option("--secret", required=True, help="The HMAC secret to verify against")
+@click.option(
+    "--secret",
+    default=None,
+    help="HMAC secret to verify against (HS256/HS384/HS512). Mutually exclusive with --public-key.",
+)
+@click.option(
+    "--public-key",
+    "public_key_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="Path to a PEM-encoded public key (RS*/PS*/ES*). Mutually exclusive with --secret.",
+)
 @click.option("--issuer", default=None, help="Expected issuer (iss claim)")
 @click.option("--audience", default=None, help="Expected audience (aud claim)")
 @click.option(
@@ -49,7 +62,8 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
 )
 def verify(
     token: str,
-    secret: str,
+    secret: str | None,
+    public_key_path: Path | None,
     issuer: str | None,
     audience: str | None,
     leeway: int,
@@ -57,31 +71,32 @@ def verify(
 ):
     token = resolve_token(token)
 
-    if not secret:
-        print_error(
-            "Secret cannot be empty",
-            "Provide the HMAC secret the token was signed with",
-            title="Invalid Input",
-        )
-        raise SystemExit(2)
-
     decoded = safe_decode(token, as_json=as_json)
     try:
-        alg = ensure_hmac_algorithm(decoded.header, action="verify")
+        alg = ensure_signing_algorithm(decoded.header)
     except UnsupportedAlgorithmError as exc:
         render_algorithm_error(exc)
         raise SystemExit(2) from exc
 
+    _validate_key_inputs(alg, secret=secret, public_key_path=public_key_path)
+
     rows: list[tuple[str, str, str]] = []
     failed = False
 
-    sig_valid = verify_signature(
-        decoded.header_b64, decoded.payload_b64, decoded.signature, secret, alg
-    )
+    try:
+        sig_valid = _verify_signature(decoded, alg, secret=secret, public_key_path=public_key_path)
+    except ValueError as exc:
+        print_error(
+            "Could not verify signature with the provided key",
+            str(exc),
+            title="Key Error",
+        )
+        raise SystemExit(2) from exc
+
     if sig_valid:
         rows.append(("PASS", "signature", "Signature is valid"))
     else:
-        rows.append(("FAIL", "signature", "Signature is invalid, wrong secret or tampered token"))
+        rows.append(("FAIL", "signature", "Signature is invalid, wrong key or tampered token"))
         failed = True
 
     failed |= _check_temporal_claims(decoded.payload, rows, leeway=leeway)
@@ -94,6 +109,45 @@ def verify(
         _emit_json(rows, failed=failed)
     else:
         _render_results(rows, failed=failed)
+
+
+def _validate_key_inputs(alg: str, *, secret: str | None, public_key_path: Path | None) -> None:
+    if secret is not None and public_key_path is not None:
+        print_error(
+            "Pass either --secret or --public-key, not both",
+            title="Invalid Input",
+        )
+        raise SystemExit(2)
+    if is_hmac(alg):
+        if not secret:
+            print_error(
+                f"{alg} requires --secret",
+                "Provide the HMAC secret the token was signed with.",
+                title="Invalid Input",
+            )
+            raise SystemExit(2)
+        return
+    # Asymmetric path.
+    if public_key_path is None:
+        print_error(
+            f"{alg} requires --public-key",
+            "Provide a PEM-encoded public key (SubjectPublicKeyInfo).",
+            title="Invalid Input",
+        )
+        raise SystemExit(2)
+
+
+def _verify_signature(
+    decoded, alg: str, *, secret: str | None, public_key_path: Path | None
+) -> bool:
+    if is_hmac(alg):
+        return verify_signature(
+            decoded.header_b64, decoded.payload_b64, decoded.signature, secret or "", alg
+        )
+    pem_bytes = public_key_path.read_bytes()  # type: ignore[union-attr]
+    return verify_asymmetric(
+        decoded.header_b64, decoded.payload_b64, decoded.signature, pem_bytes, alg
+    )
 
 
 def _check_temporal_claims(

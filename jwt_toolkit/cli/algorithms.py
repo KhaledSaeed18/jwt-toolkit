@@ -1,4 +1,8 @@
-from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
+from jwt_toolkit.core.crypto import (
+    ALL_SIGNING_ALGORITHMS,
+    ASYMMETRIC_ALGORITHMS,
+    SUPPORTED_ALGORITHMS,
+)
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 
@@ -33,3 +37,30 @@ def ensure_hmac_algorithm(header: dict, *, action: str) -> str:
             ),
         )
     return alg
+
+
+def ensure_signing_algorithm(header: dict) -> str:
+    # Validates that the token's alg is any signing algorithm we can verify
+    # (HMAC or asymmetric). Returns the canonical uppercase alg name.
+    alg = str(header.get("alg", "")).upper()
+    if alg == "NONE":
+        raise UnsupportedAlgorithmError(
+            title="Verification Error",
+            headline="Token uses alg: none, it has no signature to verify",
+            details=("This token is completely unsigned and trivially forgeable",),
+        )
+    if alg not in ALL_SIGNING_ALGORITHMS:
+        raise UnsupportedAlgorithmError(
+            title="Verification Error",
+            headline=f"Unsupported algorithm: {alg}",
+            details=(f"Supported: {', '.join(sorted(ALL_SIGNING_ALGORITHMS))}",),
+        )
+    return alg
+
+
+def is_asymmetric(alg: str) -> bool:
+    return alg.upper() in ASYMMETRIC_ALGORITHMS
+
+
+def is_hmac(alg: str) -> bool:
+    return alg.upper() in SUPPORTED_ALGORITHMS

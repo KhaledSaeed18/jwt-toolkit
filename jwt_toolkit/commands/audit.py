@@ -1,14 +1,15 @@
 import json
+from pathlib import Path
 
 import click
 from rich.panel import Panel
 from rich.table import Table
 
-from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
+from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
-from jwt_toolkit.core.crypto import verify_signature
+from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Audit command — decodes a JWT, runs the security auditor, and emits a verdict.
@@ -49,6 +50,14 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     help="HMAC secret — when provided, signature verification is included in the report.",
 )
 @click.option(
+    "--public-key",
+    "public_key_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="PEM public key (RS*/PS*/ES*) — when provided, asymmetric signature verification "
+    "is included in the report. Mutually exclusive with --secret.",
+)
+@click.option(
     "--require",
     "required_claims",
     default="",
@@ -58,16 +67,27 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
         "Missing required claims are flagged WARN instead of INFO."
     ),
 )
-def audit(token: str, strict: bool, as_json: bool, secret: str | None, required_claims: str):
+def audit(
+    token: str,
+    strict: bool,
+    as_json: bool,
+    secret: str | None,
+    public_key_path: Path | None,
+    required_claims: str,
+):
     token = resolve_token(token)
     decoded = safe_decode(token, as_json=as_json)
     required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
     report = run_audit(decoded.header, decoded.payload, required_claims=required)
     exit_code = _resolve_exit_code(report, strict=strict)
 
+    if secret is not None and public_key_path is not None:
+        click.echo("Pass either --secret or --public-key, not both", err=True)
+        raise SystemExit(2)
+
     sig_result: tuple[bool, str] | None = None
-    if secret:
-        sig_result = _check_signature(decoded, secret)
+    if secret is not None or public_key_path is not None:
+        sig_result = _check_signature(decoded, secret=secret, public_key_path=public_key_path)
         if not sig_result[0]:
             exit_code = max(exit_code, 1)
 
@@ -87,18 +107,36 @@ def audit(token: str, strict: bool, as_json: bool, secret: str | None, required_
     raise SystemExit(exit_code)
 
 
-def _check_signature(decoded, secret: str) -> tuple[bool, str]:
-    """Return (valid, detail_message). Handles unsupported algorithms gracefully."""
+def _check_signature(
+    decoded, *, secret: str | None, public_key_path: Path | None
+) -> tuple[bool, str]:
+    # Returns (valid, detail_message). Handles unsupported algorithms and key
+    # mismatches gracefully so the audit report still renders.
     try:
-        alg = ensure_hmac_algorithm(decoded.header, action="verify")
+        alg = ensure_signing_algorithm(decoded.header)
     except UnsupportedAlgorithmError as exc:
         return (False, f"Cannot verify: {exc.headline}")
-    valid = verify_signature(
-        decoded.header_b64, decoded.payload_b64, decoded.signature, secret, alg
-    )
+
+    if is_hmac(alg):
+        if secret is None:
+            return (False, f"{alg} requires --secret to verify the signature")
+        valid = verify_signature(
+            decoded.header_b64, decoded.payload_b64, decoded.signature, secret, alg
+        )
+    else:
+        if public_key_path is None:
+            return (False, f"{alg} requires --public-key to verify the signature")
+        try:
+            pem_bytes = public_key_path.read_bytes()
+            valid = verify_asymmetric(
+                decoded.header_b64, decoded.payload_b64, decoded.signature, pem_bytes, alg
+            )
+        except ValueError as exc:
+            return (False, f"Cannot verify: {exc}")
+
     if valid:
         return (True, "Signature is valid")
-    return (False, "Signature is invalid — wrong secret or tampered token")
+    return (False, "Signature is invalid — wrong key or tampered token")
 
 
 def _resolve_exit_code(report: Report, *, strict: bool) -> int:

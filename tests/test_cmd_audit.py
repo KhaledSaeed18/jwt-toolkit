@@ -1,7 +1,12 @@
 import json
 import time
 
+from cryptography.hazmat.primitives import serialization as _s
+from cryptography.hazmat.primitives.asymmetric import rsa
+
 from jwt_toolkit.cli import cli
+from jwt_toolkit.core.crypto import sign_asymmetric
+from jwt_toolkit.core.encoding import base64url_encode
 from tests.helpers import make_token, make_unsigned_token
 
 
@@ -101,3 +106,48 @@ def test_secret_invalid_shows_in_report(runner, valid_token):
     result = invoke(runner, valid_token, "--secret", "wrongsecret", "--json")
     data = json.loads(result.output)
     assert data["signature_valid"] is False
+
+
+# --public-key adds signature verification for asymmetric tokens
+
+
+def _asymmetric_token_for_audit(alg: str, private_pem: bytes) -> str:
+    header = {"alg": alg, "typ": "JWT"}
+    payload = {"sub": "1", "exp": 9999999999, "iat": 1, "iss": "x", "aud": "y", "jti": "z"}
+    h = base64url_encode(json.dumps(header, separators=(",", ":")).encode())
+    p = base64url_encode(json.dumps(payload, separators=(",", ":")).encode())
+    sig = sign_asymmetric(h, p, private_pem, alg)
+    return f"{h}.{p}.{sig}"
+
+
+def test_public_key_valid_shows_in_report(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    pub = tmp_path / "pub.pem"
+    pub.write_bytes(kp.public_pem)
+    token = _asymmetric_token_for_audit("RS256", kp.private_pem)
+    result = invoke(runner, token, "--public-key", str(pub), "--json")
+    data = json.loads(result.output)
+    assert data["signature_valid"] is True
+
+
+def test_public_key_wrong_key_shows_in_report(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    other_pub = (
+        rsa.generate_private_key(65537, 2048)
+        .public_key()
+        .public_bytes(_s.Encoding.PEM, _s.PublicFormat.SubjectPublicKeyInfo)
+    )
+    pub = tmp_path / "pub.pem"
+    pub.write_bytes(other_pub)
+    token = _asymmetric_token_for_audit("RS256", kp.private_pem)
+    result = invoke(runner, token, "--public-key", str(pub), "--json")
+    data = json.loads(result.output)
+    assert data["signature_valid"] is False
+
+
+def test_audit_rejects_both_secret_and_public_key(runner, tmp_path, keypair_for, valid_token):
+    kp = keypair_for("RS256")
+    pub = tmp_path / "pub.pem"
+    pub.write_bytes(kp.public_pem)
+    result = invoke(runner, valid_token, "--secret", "x", "--public-key", str(pub))
+    assert result.exit_code == 2
