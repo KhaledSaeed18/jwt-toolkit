@@ -230,31 +230,38 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
                 try:
                     with open(output, "w") as fout:
                         fout.write(label + "\n")
-                    saved_line = f"\n[dim]Saved to        : {output}[/dim]"
+                    saved_line = f"\n[dim]Saved to         : {output}[/dim]"
                 except OSError as exc:
                     saved_line = f"\n[dim yellow]Could not save: {exc}[/dim yellow]"
 
+            # Cracked = bad: the secret is dangerously weak.
             console.print(Panel(
-                f"[bold green]Secret found:[/bold green] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
-                f"[dim]Algorithm       : {alg}[/dim]\n"
-                f"[dim]Position        : #{idx + 1} of {total:,}[/dim]\n"
-                f"[dim]Candidates tried: {idx + 1:,}[/dim]\n"
-                f"[dim]Time elapsed    : {elapsed:.3f}s[/dim]\n"
-                f"[dim]Average rate    : {_format_rate(avg_rate)}[/dim]",
-                title="[bold green]Cracked[/bold green]",
-                border_style="green",
-            ))
-        else:
-            console.print(Panel(
-                "[bold red]Secret not found in wordlist[/bold red]\n\n"
-                f"[dim]Algorithm       : {alg}[/dim]\n"
-                f"[dim]Candidates tried: {final_attempts:,}[/dim]\n"
-                f"[dim]Time elapsed    : {elapsed:.3f}s[/dim]\n"
-                f"[dim]Average rate    : {_format_rate(avg_rate)}[/dim]",
-                title="[bold red]Not Found[/bold red]",
+                f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
+                f"[dim]Algorithm        : {alg}[/dim]\n"
+                f"[dim]Position         : #{idx + 1} of {total:,} candidates[/dim]\n"
+                f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
+                f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
+                f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
+                "[bold red]This secret is in a common wordlist — it is not safe.[/bold red]\n"
+                "[dim]Generate a strong secret with: jwt-toolkit generate-secret[/dim]",
+                title="[bold red]Weak Secret Detected[/bold red]",
                 border_style="red",
             ))
             raise SystemExit(1)
+        else:
+            # Not cracked = good: secret is not in this wordlist.
+            console.print(Panel(
+                "[bold green]Secret not found in this wordlist[/bold green]\n\n"
+                f"[dim]Algorithm        : {alg}[/dim]\n"
+                f"[dim]Candidates tried : {final_attempts:,}[/dim]\n"
+                f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
+                f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
+                "[dim]This does not guarantee the secret is strong — a larger[/dim]\n"
+                "[dim]wordlist may still find it. Use jwt-toolkit generate-secret[/dim]\n"
+                "[dim]if you need a cryptographically strong secret.[/dim]",
+                title="[bold green]Wordlist Check Passed[/bold green]",
+                border_style="green",
+            ))
 
     except binascii.Error:
         console.print(Panel(
