@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+from collections.abc import Callable
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -34,7 +35,9 @@ ALL_SIGNING_ALGORITHMS = frozenset(SUPPORTED_ALGORITHMS) | ASYMMETRIC_ALGORITHMS
 
 # Hash algorithm to use for each asymmetric alg. The trailing digits in the JWS
 # alg name (e.g. "RS256" → SHA-256) determine the hash, regardless of family.
-_HASH_BY_ALG = {
+# Typed as a callable factory so mypy doesn't see the values as the abstract
+# `type[HashAlgorithm]` base — the dict holds concrete constructors.
+_HASH_BY_ALG: dict[str, Callable[[], hashes.HashAlgorithm]] = {
     "RS256": hashes.SHA256,
     "RS384": hashes.SHA384,
     "RS512": hashes.SHA512,
