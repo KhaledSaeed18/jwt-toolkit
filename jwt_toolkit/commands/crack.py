@@ -1,5 +1,6 @@
 import hmac as _hmac
 import math
+import os
 import threading
 import time
 
@@ -16,7 +17,7 @@ from rich.progress import (
 
 from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.decoding import render_algorithm_error, safe_decode
+from jwt_toolkit.cli.decoding import render_algorithm_error, resolve_token, safe_decode
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
 from jwt_toolkit.core.encoding import base64_decode_padded, base64url_encode
@@ -76,6 +77,7 @@ def _format_rate(rate: float) -> str:
     help="Write found secret to this file",
 )
 def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | None):
+    token = resolve_token(token)
     decoded = safe_decode(token)
 
     if not decoded.signature:
@@ -108,12 +110,13 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
     total = len(expanded)
     threads = min(threads, total)
 
-    console.print(
-        f"[dim]Algorithm : {alg}   "
-        f"Candidates : {total:,}   "
-        f"Threads : {threads}   "
-        f"Encoding : {encoding}[/dim]"
-    )
+    if not os.environ.get("JWT_TOOLKIT_QUIET"):
+        console.print(
+            f"[dim]Algorithm : {alg}   "
+            f"Candidates : {total:,}   "
+            f"Threads : {threads}   "
+            f"Encoding : {encoding}[/dim]"
+        )
 
     result, final_attempts, elapsed = _run_crack(
         expanded, threads, alg, decoded.header_b64, decoded.payload_b64, decoded.signature

@@ -1,3 +1,4 @@
+import json
 import time
 
 import click
@@ -6,12 +7,17 @@ from rich.table import Table
 
 from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.decoding import render_algorithm_error, safe_decode
+from jwt_toolkit.cli.decoding import (
+    JSON_SCHEMA_VERSION,
+    render_algorithm_error,
+    resolve_token,
+    safe_decode,
+)
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
-# Verify command — checks the signature and validates claims (exp, nbf, iss, aud).
+# Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
 
 RESULT_COLORS = {
     "PASS": "bold green",
@@ -19,13 +25,38 @@ RESULT_COLORS = {
     "WARN": "yellow",
 }
 
+# Small leeway used when checking iat-in-future — matches the auditor's constant.
+_IAT_FUTURE_LEEWAY_SECONDS = 60
 
-@click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iss, aud).")
+
+@click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iat, iss, aud).")
 @click.argument("token")
 @click.option("--secret", required=True, help="The HMAC secret to verify against")
 @click.option("--issuer", default=None, help="Expected issuer (iss claim)")
 @click.option("--audience", default=None, help="Expected audience (aud claim)")
-def verify(token: str, secret: str, issuer: str | None, audience: str | None):
+@click.option(
+    "--leeway",
+    default=0,
+    show_default=True,
+    type=click.IntRange(0),
+    help="Clock-skew tolerance in seconds for exp/nbf checks",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit a machine-readable JSON report.",
+)
+def verify(
+    token: str,
+    secret: str,
+    issuer: str | None,
+    audience: str | None,
+    leeway: int,
+    as_json: bool,
+):
+    token = resolve_token(token)
+
     if not secret:
         print_error(
             "Secret cannot be empty",
@@ -34,7 +65,7 @@ def verify(token: str, secret: str, issuer: str | None, audience: str | None):
         )
         raise SystemExit(2)
 
-    decoded = safe_decode(token)
+    decoded = safe_decode(token, as_json=as_json)
     try:
         alg = ensure_hmac_algorithm(decoded.header, action="verify")
     except UnsupportedAlgorithmError as exc:
@@ -53,16 +84,21 @@ def verify(token: str, secret: str, issuer: str | None, audience: str | None):
         rows.append(("FAIL", "signature", "Signature is invalid, wrong secret or tampered token"))
         failed = True
 
-    failed |= _check_temporal_claims(decoded.payload, rows)
+    failed |= _check_temporal_claims(decoded.payload, rows, leeway=leeway)
     if issuer is not None:
         failed |= _check_issuer(decoded.payload, issuer, rows)
     if audience is not None:
         failed |= _check_audience(decoded.payload, audience, rows)
 
-    _render_results(rows, failed=failed)
+    if as_json:
+        _emit_json(rows, failed=failed)
+    else:
+        _render_results(rows, failed=failed)
 
 
-def _check_temporal_claims(payload: dict, rows: list[tuple[str, str, str]]) -> bool:
+def _check_temporal_claims(
+    payload: dict, rows: list[tuple[str, str, str]], *, leeway: int = 0
+) -> bool:
     now = time.time()
     failed = False
 
@@ -72,7 +108,7 @@ def _check_temporal_claims(payload: dict, rows: list[tuple[str, str, str]]) -> b
     elif not isinstance(exp, (int, float)):
         rows.append(("FAIL", "exp", f"exp is not a number: {exp!r}"))
         failed = True
-    elif exp < now:
+    elif exp + leeway < now:
         rows.append(("FAIL", "exp", "Token is expired"))
         failed = True
     else:
@@ -83,9 +119,16 @@ def _check_temporal_claims(payload: dict, rows: list[tuple[str, str, str]]) -> b
         if not isinstance(nbf, (int, float)):
             rows.append(("FAIL", "nbf", f"nbf is not a number: {nbf!r}"))
             failed = True
-        elif nbf > now:
+        elif nbf > now + leeway:
             rows.append(("FAIL", "nbf", "Token is not yet valid (nbf is in the future)"))
             failed = True
+
+    iat = payload.get("iat")
+    if iat is not None:
+        if not isinstance(iat, (int, float)):
+            rows.append(("WARN", "iat", f"iat is not a number: {iat!r}"))
+        elif iat > now + _IAT_FUTURE_LEEWAY_SECONDS + leeway:
+            rows.append(("WARN", "iat", "iat is in the future — clock skew or forged token"))
 
     return failed
 
@@ -109,6 +152,19 @@ def _check_audience(payload: dict, audience: str, rows: list[tuple[str, str, str
     return True
 
 
+def _emit_json(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
+    document = {
+        "schema_version": JSON_SCHEMA_VERSION,
+        "valid": not failed,
+        "checks": [
+            {"result": result, "check": check, "detail": detail}
+            for result, check, detail in rows
+        ],
+    }
+    click.echo(json.dumps(document, indent=2))
+    raise SystemExit(1 if failed else 0)
+
+
 def _render_results(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
     table = Table(title="Verification Checks", show_lines=True)
     table.add_column("Result", style="bold", width=8)
@@ -123,6 +179,5 @@ def _render_results(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
 
     if failed:
         console.print(Panel("[bold red]INVALID[/bold red]", border_style="red"))
-        # Exit 1 so CI/scripts can gate on the verification outcome.
         raise SystemExit(1)
     console.print(Panel("[bold green]VALID[/bold green]", border_style="green"))

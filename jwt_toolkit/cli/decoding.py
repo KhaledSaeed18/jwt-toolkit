@@ -1,4 +1,5 @@
 import json
+import sys
 from typing import Callable
 
 import click
@@ -9,6 +10,27 @@ from jwt_toolkit.core.errors import TokenDecodeError, UnsupportedAlgorithmError
 
 # Stable schema version shared by every command that emits --json errors.
 JSON_SCHEMA_VERSION = "0.1"
+
+
+def resolve_token(raw: str) -> str:
+    """Resolve the token string from a raw CLI argument.
+
+    Accepts three forms:
+      -        read from stdin
+      @<path>  read from a file
+      <token>  use as-is
+    """
+    if raw == "-":
+        return sys.stdin.read().strip()
+    if raw.startswith("@"):
+        path = raw[1:]
+        try:
+            with open(path) as fh:
+                return fh.read().strip()
+        except OSError as exc:
+            click.echo(f"Cannot read token from {path!r}: {exc}", err=True)
+            raise SystemExit(2)
+    return raw
 
 
 def safe_decode(

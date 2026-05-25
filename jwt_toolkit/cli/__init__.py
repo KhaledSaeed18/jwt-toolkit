@@ -1,3 +1,4 @@
+import os
 from importlib.metadata import PackageNotFoundError, version
 import click
 from jwt_toolkit.cli.banner import render_banner, render_help
@@ -57,13 +58,31 @@ Run `jwt-toolkit COMMAND --help` for command-specific options.
     envvar="JWT_TOOLKIT_NO_BANNER",
     help="Suppress the startup banner (also: JWT_TOOLKIT_NO_BANNER=1).",
 )
+@click.option(
+    "--quiet",
+    is_flag=True,
+    envvar="JWT_TOOLKIT_QUIET",
+    help="Suppress banner and non-essential output; useful for scripting.",
+)
+@click.option(
+    "--no-color",
+    is_flag=True,
+    envvar="NO_COLOR",
+    help="Disable color output (also: NO_COLOR=1).",
+)
 @click.pass_context
-def cli(ctx: click.Context, no_banner: bool):
+def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool):
+    # Set env vars before the lazy console is first used by any subcommand.
+    if no_color:
+        os.environ["NO_COLOR"] = "1"
+    if quiet:
+        os.environ["JWT_TOOLKIT_QUIET"] = "1"
+
     # The banner is only rendered for the bare `jwt-toolkit` invocation.
     # Printing it for every subcommand would corrupt --json output and noisily
     # prefix Click's usage errors, so it stays out of the subcommand path.
     if ctx.invoked_subcommand is None:
-        if not no_banner:
+        if not (no_banner or quiet):
             render_banner()
         render_help()
 

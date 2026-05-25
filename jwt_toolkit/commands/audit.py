@@ -5,11 +5,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, safe_decode
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
+from jwt_toolkit.core.crypto import verify_signature
+from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Audit command — decodes a JWT, runs the security auditor, and emits a verdict.
-# Static checks only; no signature verification or key resolution.
+# Static checks only by default; --secret adds live signature verification.
 
 
 _SEVERITY_COLORS = {
@@ -40,21 +43,46 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     is_flag=True,
     help="Emit a machine-readable report. Schema is experimental.",
 )
-def audit(token: str, strict: bool, as_json: bool):
+@click.option(
+    "--secret",
+    default=None,
+    help="HMAC secret — when provided, signature verification is included in the report.",
+)
+def audit(token: str, strict: bool, as_json: bool, secret: str | None):
+    token = resolve_token(token)
     decoded = safe_decode(token, as_json=as_json)
     report = run_audit(decoded.header, decoded.payload)
     exit_code = _resolve_exit_code(report, strict=strict)
 
+    sig_result: tuple[bool, str] | None = None
+    if secret:
+        sig_result = _check_signature(decoded, secret)
+        if not sig_result[0]:
+            exit_code = max(exit_code, 1)
+
     if as_json:
-        _emit_json(decoded.header, decoded.payload, decoded.signature, report, exit_code, strict)
+        _emit_json(decoded.header, decoded.payload, decoded.signature, report, exit_code, strict, sig_result)
     else:
-        _emit_rich(decoded.header, decoded.payload, decoded.signature, report)
+        _emit_rich(decoded.header, decoded.payload, decoded.signature, report, sig_result)
 
     raise SystemExit(exit_code)
 
 
+def _check_signature(decoded, secret: str) -> tuple[bool, str]:
+    """Return (valid, detail_message). Handles unsupported algorithms gracefully."""
+    try:
+        alg = ensure_hmac_algorithm(decoded.header, action="verify")
+    except UnsupportedAlgorithmError as exc:
+        return (False, f"Cannot verify: {exc.headline}")
+    valid = verify_signature(
+        decoded.header_b64, decoded.payload_b64, decoded.signature, secret, alg
+    )
+    if valid:
+        return (True, "Signature is valid")
+    return (False, "Signature is invalid — wrong secret or tampered token")
+
+
 def _resolve_exit_code(report: Report, *, strict: bool) -> int:
-    # Grade F is always a hard failure. --strict promotes any WARN to a failure too.
     if report.grade is Grade.F:
         return 1
     if strict and report.counts.get(Severity.WARN, 0) > 0:
@@ -69,6 +97,7 @@ def _emit_json(
     report: Report,
     exit_code: int,
     strict: bool,
+    sig_result: tuple[bool, str] | None,
 ) -> None:
     verdict, _ = _GRADE_STYLES[report.grade]
     document = {
@@ -91,13 +120,33 @@ def _emit_json(
             for f in report.findings
         ],
     }
+    if sig_result is not None:
+        document["signature_valid"] = sig_result[0]
+        document["signature_detail"] = sig_result[1]
     click.echo(json.dumps(document, indent=2, sort_keys=False, default=str))
 
 
-def _emit_rich(header: dict, payload: dict, signature: str, report: Report) -> None:
+def _emit_rich(
+    header: dict,
+    payload: dict,
+    signature: str,
+    report: Report,
+    sig_result: tuple[bool, str] | None,
+) -> None:
     console.print(Panel(json.dumps(header, indent=2),  title="Header",    border_style="blue"))
     console.print(Panel(json.dumps(payload, indent=2), title="Payload",   border_style="blue"))
     console.print(Panel(signature or "(none)",         title="Signature", border_style="blue"))
+
+    if sig_result is not None:
+        valid, detail = sig_result
+        color = "green" if valid else "red"
+        label = "VALID" if valid else "INVALID"
+        console.print(Panel(
+            f"[bold {color}]{label}[/bold {color}]  [dim]{detail}[/dim]",
+            title="Signature Verification",
+            border_style=color,
+        ))
+
     console.print(_render_verdict(report))
     console.print(_render_findings_table(report))
     footer = _render_footer(report)
@@ -120,8 +169,6 @@ def _render_verdict(report: Report) -> Panel:
 
 
 def _render_findings_table(report: Report) -> Table:
-    # Skip the Recommendation column when nothing has one — keeps the table
-    # compact in the common case where every finding is a PASS.
     show_recs = any(f.recommendation for f in report.findings)
 
     table = Table(title="Findings", show_lines=True)
@@ -146,7 +193,6 @@ def _render_findings_table(report: Report) -> Table:
 
 
 def _render_footer(report: Report) -> Panel | None:
-    # Surface the next command to run based on which findings actually fired.
     hints: list[str] = []
     fields = {f.field for f in report.findings if f.severity in (Severity.CRITICAL, Severity.WARN)}
 
