@@ -16,7 +16,6 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
-
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, base64url_encode
 from jwt_toolkit.core.decoder import decode_token, split_token
 
@@ -88,7 +87,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
             console.print(Panel(
                 "[bold red]Token has an empty signature — nothing to crack[/bold red]\n\n"
                 "[dim]An empty signature is characteristic of an alg:none attack[/dim]\n"
-                "[dim]Use inspect to examine the token structure[/dim]",
+                "[dim]Use audit to examine the token structure[/dim]",
                 title="Cannot Crack",
                 border_style="red",
             ))
