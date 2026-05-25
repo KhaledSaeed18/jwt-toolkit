@@ -22,8 +22,7 @@ from jwt_toolkit.cli.panels import print_error, print_success
 # Download command — fetches the latest common-secrets wordlist from the jwt-toolkit repo.
 
 _WORDLIST_URL = (
-    "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main"
-    "/wordlists/common-secrets.txt"
+    "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main/wordlists/common-secrets.txt"
 )
 _FILENAME = "common-secrets.txt"
 
@@ -55,7 +54,7 @@ def _download(url: str, dest: Path) -> int:
         TransferSpeedColumn(),
         TimeRemainingColumn(),
         TimeElapsedColumn(),
-        console=console,
+        console=console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
         transient=True,
     ) as progress:
         try:
@@ -71,7 +70,7 @@ def _download(url: str, dest: Path) -> int:
 
         written = 0
         try:
-            with open(dest, "wb") as f:
+            with dest.open("wb") as f:
                 while True:
                     chunk = response.read(65_536)
                     if not chunk:
@@ -82,14 +81,14 @@ def _download(url: str, dest: Path) -> int:
         except KeyboardInterrupt:
             dest.unlink(missing_ok=True)
             console.print("\n[yellow]Download cancelled[/yellow]")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
     return written
 
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(65_536), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -97,7 +96,7 @@ def _sha256(path: Path) -> str:
 
 def _count_lines(path: Path) -> int:
     count = 0
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for _ in f:
             count += 1
     return count
@@ -156,7 +155,7 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
             f"Error : {exc.strerror}",
             title="Directory Error",
         )
-        raise SystemExit(2)
+        raise SystemExit(2) from exc
 
     dest = dest_dir / _FILENAME
 
@@ -183,7 +182,7 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
             f"Error : {exc}",
             title="Write Error",
         )
-        raise SystemExit(2)
+        raise SystemExit(2) from exc
 
     if verify_integrity:
         actual = _sha256(dest)

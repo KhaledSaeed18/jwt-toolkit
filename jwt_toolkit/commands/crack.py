@@ -2,6 +2,7 @@ import hmac as _hmac
 import os
 import threading
 import time
+from pathlib import Path
 
 import click
 from rich.panel import Panel
@@ -40,7 +41,7 @@ def _iter_candidates(wordlist_path: str, encoding: str):
     Handles P2 (no full-file load) and P3 (dedup by bytes) in one pass.
     """
     seen: set[bytes] = set()
-    with open(wordlist_path, "r", errors="ignore") as f:
+    with Path(wordlist_path).open(errors="ignore") as f:
         for line in f:
             word = line.strip()
             if not word or word.startswith("#"):
@@ -71,7 +72,7 @@ def _iter_candidates(wordlist_path: str, encoding: str):
 def _count_raw_lines(wordlist_path: str) -> int:
     """Fast pre-scan: count valid (non-empty, non-comment) lines."""
     count = 0
-    with open(wordlist_path, "r", errors="ignore") as f:
+    with Path(wordlist_path).open(errors="ignore") as f:
         for line in f:
             s = line.strip()
             if s and not s.startswith("#"):
@@ -95,7 +96,7 @@ def _format_rate(rate: float) -> str:
     default=_DEFAULT_THREADS,
     show_default=True,
     type=click.IntRange(1, 64),
-    help="Worker threads (1–64)",
+    help="Worker threads (1-64)",
 )
 @click.option(
     "--encoding",
@@ -149,8 +150,14 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         )
 
     result, final_attempts, elapsed = _run_crack(
-        wordlist, encoding, total_estimate, threads, alg,
-        decoded.header_b64, decoded.payload_b64, decoded.signature,
+        wordlist,
+        encoding,
+        total_estimate,
+        threads,
+        alg,
+        decoded.header_b64,
+        decoded.payload_b64,
+        decoded.signature,
     )
     avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
@@ -160,7 +167,7 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
     _render_not_found(alg, final_attempts, elapsed, avg_rate)
 
 
-def _run_crack(
+def _run_crack(  # noqa: PLR0915 — thread orchestration; splitting hurts readability
     wordlist_path: str,
     encoding: str,
     total_estimate: int,
@@ -198,7 +205,7 @@ def _run_crack(
                         break
                     pos = position_counter[0]
                     position_counter[0] += 1
-                    batch.append((pos, item))  # type: ignore[arg-type]
+                    batch.append((pos, item))
             if not batch:
                 break
             for pos, (label, sbytes) in batch:
@@ -217,10 +224,7 @@ def _run_crack(
         with lock:
             attempts_box[0] += local_attempts
 
-    thread_list = [
-        threading.Thread(target=worker, daemon=True)
-        for _ in range(threads)
-    ]
+    thread_list = [threading.Thread(target=worker, daemon=True) for _ in range(threads)]
     start = time.perf_counter()
 
     with Progress(
@@ -230,10 +234,10 @@ def _run_crack(
         TaskProgressColumn(),
         TextColumn("[dim]{task.fields[rate]}[/dim]"),
         TimeElapsedColumn(),
-        console=console,
+        console=console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
         transient=True,
     ) as progress:
-        task = progress.add_task("Cracking…", total=total_estimate, rate="–")
+        task = progress.add_task("Cracking…", total=total_estimate, rate="-")
 
         for t in thread_list:
             t.start()
@@ -277,37 +281,41 @@ def _render_found(
     saved_line = ""
     if output:
         try:
-            with open(output, "w") as fout:
+            with Path(output).open("w") as fout:
                 fout.write(label + "\n")
             saved_line = f"\n[dim]Saved to         : {output}[/dim]"
         except OSError as exc:
             saved_line = f"\n[dim yellow]Could not save: {exc}[/dim yellow]"
 
     # Cracked = bad: the secret is dangerously weak.
-    console.print(Panel(
-        f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
-        f"[dim]Algorithm        : {alg}[/dim]\n"
-        f"[dim]Position         : #{idx + 1} of ~{total_estimate:,} candidates[/dim]\n"
-        f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
-        f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
-        f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
-        "[bold red]This secret is in a common wordlist — it is not safe.[/bold red]\n"
-        "[dim]Generate a strong secret with: jwt-toolkit generate-secret[/dim]",
-        title="[bold red]Weak Secret Detected[/bold red]",
-        border_style="red",
-    ))
+    console.print(
+        Panel(
+            f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
+            f"[dim]Algorithm        : {alg}[/dim]\n"
+            f"[dim]Position         : #{idx + 1} of ~{total_estimate:,} candidates[/dim]\n"
+            f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
+            f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
+            f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
+            "[bold red]This secret is in a common wordlist — it is not safe.[/bold red]\n"
+            "[dim]Generate a strong secret with: jwt-toolkit generate-secret[/dim]",
+            title="[bold red]Weak Secret Detected[/bold red]",
+            border_style="red",
+        )
+    )
 
 
 def _render_not_found(alg: str, attempts: int, elapsed: float, avg_rate: float) -> None:
-    console.print(Panel(
-        "[bold green]Secret not found in this wordlist[/bold green]\n\n"
-        f"[dim]Algorithm        : {alg}[/dim]\n"
-        f"[dim]Candidates tried : {attempts:,}[/dim]\n"
-        f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
-        f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
-        "[dim]This does not guarantee the secret is strong — a larger[/dim]\n"
-        "[dim]wordlist may still find it. Use jwt-toolkit generate-secret[/dim]\n"
-        "[dim]if you need a cryptographically strong secret.[/dim]",
-        title="[bold green]Wordlist Check Passed[/bold green]",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            "[bold green]Secret not found in this wordlist[/bold green]\n\n"
+            f"[dim]Algorithm        : {alg}[/dim]\n"
+            f"[dim]Candidates tried : {attempts:,}[/dim]\n"
+            f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
+            f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
+            "[dim]This does not guarantee the secret is strong — a larger[/dim]\n"
+            "[dim]wordlist may still find it. Use jwt-toolkit generate-secret[/dim]\n"
+            "[dim]if you need a cryptographically strong secret.[/dim]",
+            title="[bold green]Wordlist Check Passed[/bold green]",
+            border_style="green",
+        )
+    )

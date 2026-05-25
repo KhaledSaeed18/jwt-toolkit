@@ -39,7 +39,9 @@ def decode_token(token: str) -> DecodedToken:
     try:
         header = json.loads(base64url_decode(header_b64))
         payload = json.loads(base64url_decode(payload_b64))
-    except binascii.Error as exc:
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        # binascii.Error: bad base64 bytes. UnicodeDecodeError: decoded bytes
+        # are not valid UTF-8 and therefore cannot be JSON.
         raise TokenDecodeError(
             code="invalid_base64url",
             title="Decode Error",

@@ -1,6 +1,8 @@
 import os
 from importlib.metadata import PackageNotFoundError, version
+
 import click
+
 from jwt_toolkit.cli.banner import render_banner, render_help
 from jwt_toolkit.commands.audit import audit
 from jwt_toolkit.commands.crack import crack
@@ -48,6 +50,7 @@ Examples:
 Run `jwt-toolkit COMMAND --help` for command-specific options.
 """
 
+
 @click.group(
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -91,6 +94,7 @@ def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool):
         if not (no_banner or quiet):
             render_banner()
         render_help()
+
 
 cli.add_command(decode)
 cli.add_command(sign)

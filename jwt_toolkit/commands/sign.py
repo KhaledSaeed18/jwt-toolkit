@@ -44,7 +44,7 @@ def sign(payload_json: str, secret: str, alg: str, header_json: str | None):
             'Provide a valid JSON object, e.g. \'{"sub": "1", "exp": 9999999999}\'',
             title="Invalid Input",
         )
-        raise SystemExit(2)
+        raise SystemExit(2) from exc
 
     if header_json is None:
         header = {"alg": alg.upper(), "typ": "JWT"}
@@ -57,7 +57,7 @@ def sign(payload_json: str, secret: str, alg: str, header_json: str | None):
                 f"JSON error: {exc.msg}",
                 title="Invalid Input",
             )
-            raise SystemExit(2)
+            raise SystemExit(2) from exc
 
     sign_alg = str(header.get("alg", alg)).upper()
     if sign_alg not in SUPPORTED_ALGORITHMS:

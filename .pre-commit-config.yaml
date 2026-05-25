@@ -1,0 +1,31 @@
+# Pre-commit hooks — run automatically on `git commit`.
+# Install once per clone:    uv run pre-commit install
+# Run manually on all files: uv run pre-commit run --all-files
+#
+# Hooks are pinned by rev for reproducibility. Bump with:
+#   uv run pre-commit autoupdate
+
+repos:
+  # General hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+
+  # Ruff — formatter + linter (replaces black, flake8, isort).
+  # Order matters: format first, then lint so the linter sees formatted code.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: ["--fix"]
+
+  # Mypy runs in CI rather than pre-commit by default — it's slow on cold cache
+  # and blocks commits in a way contributors find frustrating. CI is the gate.

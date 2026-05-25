@@ -1,6 +1,7 @@
 import json
 import sys
-from typing import Callable
+from collections.abc import Callable
+from pathlib import Path
 
 import click
 
@@ -25,11 +26,11 @@ def resolve_token(raw: str) -> str:
     if raw.startswith("@"):
         path = raw[1:]
         try:
-            with open(path) as fh:
+            with Path(path).open() as fh:
                 return fh.read().strip()
         except OSError as exc:
             click.echo(f"Cannot read token from {path!r}: {exc}", err=True)
-            raise SystemExit(2)
+            raise SystemExit(2) from exc
     return raw
 
 

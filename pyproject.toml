@@ -12,3 +12,113 @@ dependencies = [
 
 [project.scripts]
 jwt-toolkit = "jwt_toolkit.cli:cli"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "pytest-cov>=6.0",
+    "pytest-xdist>=3.6",
+    "pytest-randomly>=3.16",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-ra",                # show short summary for all non-passing outcomes
+    "--strict-markers",   # unknown @pytest.mark.* fails the run
+    "--strict-config",    # typos in this config fail the run
+    "--showlocals",       # locals on failure — like jest verbose
+]
+xfail_strict = true       # an xfail that passes is a failure (catches stale skips)
+filterwarnings = [
+    "error",              # warnings become errors — Python's "strict mode"
+]
+markers = [
+    "slow: long-running tests (deselect with -m 'not slow')",
+    "integration: tests that touch real crypto / filesystem / network",
+]
+
+[tool.coverage.run]
+source = ["jwt_toolkit"]
+branch = true
+parallel = true
+omit = [
+    # Animated startup banner — pure UX decoration, no logic worth asserting.
+    "jwt_toolkit/cli/banner.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 80
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pragma: no cover",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["jwt_toolkit.egg-info", ".venv", "wordlists"]
+
+[tool.ruff.lint]
+# Curated, opinionated rule set — broad enough to catch real issues,
+# narrow enough to not drown the project in nits.
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear — common bug patterns
+    "UP",       # pyupgrade — keep syntax modern
+    "SIM",      # simplifications
+    "C4",       # comprehensions
+    "RUF",      # ruff-specific
+    "TID",      # tidy imports
+    "PTH",      # prefer pathlib over os.path
+    "PL",       # pylint subset
+    "ARG",      # unused arguments
+    "RET",      # return statement issues
+]
+ignore = [
+    "PLR2004",  # magic numbers — too noisy in tests
+    "PLR0913",  # too many arguments — CLI commands legitimately need many
+    "E501",     # line length — handled by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "ARG",      # unused fixture args are normal in pytest
+    "PLR2004",  # magic numbers fine in assertions
+    "B011",     # assert False is fine in tests
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jwt_toolkit", "tests"]
+
+
+[tool.mypy]
+python_version = "3.13"
+files = ["jwt_toolkit"]   # tests intentionally excluded — they don't need types
+pretty = true
+show_error_codes = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+check_untyped_defs = true            # type-check function bodies even w/o annotations
+no_implicit_optional = true
+
+# Third-party libs that ship no stubs:
+[[tool.mypy.overrides]]
+module = ["pyfiglet.*"]
+ignore_missing_imports = true
+
+# Animated startup banner — UX decoration, excluded for the same reason
+# as coverage (see [tool.coverage.run].omit).
+[[tool.mypy.overrides]]
+module = "jwt_toolkit.cli.banner"
+ignore_errors = true

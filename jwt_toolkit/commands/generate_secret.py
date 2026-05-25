@@ -1,6 +1,6 @@
 import base64
 import secrets
-from typing import Callable
+from collections.abc import Callable
 
 import click
 
@@ -14,10 +14,13 @@ from jwt_toolkit.cli.panels import print_error, print_success
 # callable for rules whose hint depends on the actual value passed.
 _VALIDATIONS: tuple[tuple[str, Callable[[int], bool], str | Callable[[int], str]], ...] = (
     ("--bits must be a positive number", lambda b: b <= 0, "Try instead : 256 bits"),
-    ("--bits must be 4096 or fewer",     lambda b: b > 4096, "Maximum     : 4096 bits"),
-    ("--bits is too small to be secure", lambda b: b < 64,  "Minimum     : 64 bits"),
-    ("--bits must be a multiple of 8",   lambda b: b % 8 != 0,
-        lambda b: f"Try instead : {(b // 8 + 1) * 8} bits"),
+    ("--bits must be 4096 or fewer", lambda b: b > 4096, "Maximum     : 4096 bits"),
+    ("--bits is too small to be secure", lambda b: b < 64, "Minimum     : 64 bits"),
+    (
+        "--bits must be a multiple of 8",
+        lambda b: b % 8 != 0,
+        lambda b: f"Try instead : {(b // 8 + 1) * 8} bits",
+    ),
 )
 
 
@@ -44,8 +47,16 @@ def _strength_for(bits: int) -> str:
 
 
 @click.command(help="Generate a cryptographically strong random secret for signing JWTs.")
-@click.option("--bits", default=256, show_default=True, help="Secret length in bits (must be a multiple of 8)")
-@click.option("--encoding", type=click.Choice(["hex", "base64"]), default="hex", show_default=True, help="Output encoding")
+@click.option(
+    "--bits", default=256, show_default=True, help="Secret length in bits (must be a multiple of 8)"
+)
+@click.option(
+    "--encoding",
+    type=click.Choice(["hex", "base64"]),
+    default="hex",
+    show_default=True,
+    help="Output encoding",
+)
 def generate_secret(bits: int, encoding: str):
     _validate_bits(bits)
 

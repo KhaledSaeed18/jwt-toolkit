@@ -4,9 +4,9 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
+from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
-from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
 from jwt_toolkit.core.crypto import verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
@@ -23,10 +23,10 @@ _SEVERITY_COLORS = {
 }
 
 _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
-    Grade.A: ("SECURE",    "green"),
-    Grade.B: ("WEAK",      "yellow"),
-    Grade.C: ("WEAK",      "yellow"),
-    Grade.F: ("INSECURE",  "red"),
+    Grade.A: ("SECURE", "green"),
+    Grade.B: ("WEAK", "yellow"),
+    Grade.C: ("WEAK", "yellow"),
+    Grade.F: ("INSECURE", "red"),
 }
 
 
@@ -72,7 +72,15 @@ def audit(token: str, strict: bool, as_json: bool, secret: str | None, required_
             exit_code = max(exit_code, 1)
 
     if as_json:
-        _emit_json(decoded.header, decoded.payload, decoded.signature, report, exit_code, strict, sig_result)
+        _emit_json(
+            decoded.header,
+            decoded.payload,
+            decoded.signature,
+            report,
+            exit_code,
+            strict,
+            sig_result,
+        )
     else:
         _emit_rich(decoded.header, decoded.payload, decoded.signature, report, sig_result)
 
@@ -144,19 +152,21 @@ def _emit_rich(
     report: Report,
     sig_result: tuple[bool, str] | None,
 ) -> None:
-    console.print(Panel(json.dumps(header, indent=2),  title="Header",    border_style="blue"))
-    console.print(Panel(json.dumps(payload, indent=2), title="Payload",   border_style="blue"))
-    console.print(Panel(signature or "(none)",         title="Signature", border_style="blue"))
+    console.print(Panel(json.dumps(header, indent=2), title="Header", border_style="blue"))
+    console.print(Panel(json.dumps(payload, indent=2), title="Payload", border_style="blue"))
+    console.print(Panel(signature or "(none)", title="Signature", border_style="blue"))
 
     if sig_result is not None:
         valid, detail = sig_result
         color = "green" if valid else "red"
         label = "VALID" if valid else "INVALID"
-        console.print(Panel(
-            f"[bold {color}]{label}[/bold {color}]  [dim]{detail}[/dim]",
-            title="Signature Verification",
-            border_style=color,
-        ))
+        console.print(
+            Panel(
+                f"[bold {color}]{label}[/bold {color}]  [dim]{detail}[/dim]",
+                title="Signature Verification",
+                border_style=color,
+            )
+        )
 
     console.print(_render_verdict(report))
     console.print(_render_findings_table(report))
@@ -176,7 +186,9 @@ def _render_verdict(report: Report) -> Panel:
         f"INFO : {counts.get(Severity.INFO, 0)}   "
         f"PASS : {counts.get(Severity.PASS, 0)}[/dim]"
     )
-    return Panel(summary, title=f"[bold {colour}]Security Verdict[/bold {colour}]", border_style=colour)
+    return Panel(
+        summary, title=f"[bold {colour}]Security Verdict[/bold {colour}]", border_style=colour
+    )
 
 
 def _render_findings_table(report: Report) -> Table:
@@ -208,7 +220,9 @@ def _render_footer(report: Report) -> Panel | None:
     fields = {f.field for f in report.findings if f.severity in (Severity.CRITICAL, Severity.WARN)}
 
     if "alg" in fields:
-        hints.append("[dim]Test the HMAC secret strength : [/dim]jwt-toolkit crack <token> <wordlist>")
+        hints.append(
+            "[dim]Test the HMAC secret strength : [/dim]jwt-toolkit crack <token> <wordlist>"
+        )
     if fields & {"alg", "exp", "kid", "jwk", "jku", "x5u"}:
         hints.append("[dim]Generate a strong secret      : [/dim]jwt-toolkit generate-secret")
 

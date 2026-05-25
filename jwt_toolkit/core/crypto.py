@@ -1,5 +1,5 @@
-import hmac
 import hashlib
+import hmac
 
 from jwt_toolkit.core.encoding import base64url_encode
 

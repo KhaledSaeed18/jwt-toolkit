@@ -137,7 +137,9 @@ def _check_issuer(payload: dict, issuer: str, rows: list[tuple[str, str, str]]) 
     if payload.get("iss") == issuer:
         rows.append(("PASS", "iss", f"Issuer matches '{issuer}'"))
         return False
-    rows.append(("FAIL", "iss", f"Issuer mismatch: expected '{issuer}', got '{payload.get('iss')}'"))
+    rows.append(
+        ("FAIL", "iss", f"Issuer mismatch: expected '{issuer}', got '{payload.get('iss')}'")
+    )
     return True
 
 
@@ -157,8 +159,7 @@ def _emit_json(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
         "schema_version": JSON_SCHEMA_VERSION,
         "valid": not failed,
         "checks": [
-            {"result": result, "check": check, "detail": detail}
-            for result, check, detail in rows
+            {"result": result, "check": check, "detail": detail} for result, check, detail in rows
         ],
     }
     click.echo(json.dumps(document, indent=2))

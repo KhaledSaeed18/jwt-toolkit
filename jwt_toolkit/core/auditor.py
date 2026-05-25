@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Iterable, Iterator
 import re
 import time
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
+from enum import Enum
 
 # Auditor module — static security analysis of a decoded JWT header and payload.
 
@@ -11,17 +11,23 @@ SYMMETRIC_ALGORITHMS = {"HS256", "HS384", "HS512"}
 
 # Asymmetric algorithms — public/private key pairs, no shared secret to crack.
 ASYMMETRIC_ALGORITHMS = {
-    "RS256", "RS384", "RS512",
-    "ES256", "ES384", "ES512",
-    "PS256", "PS384", "PS512",
+    "RS256",
+    "RS384",
+    "RS512",
+    "ES256",
+    "ES384",
+    "ES512",
+    "PS256",
+    "PS384",
+    "PS512",
 }
 
 # Lifetime tiers, evaluated longest-first so the most severe match wins.
 # Severity is derived in _audit_expiry to keep the table flat and editable.
 _LIFETIME_TIERS: tuple[tuple[int, str], ...] = (
     (60 * 60 * 24 * 30, "more than 30 days"),
-    (60 * 60 * 24,      "more than 24 hours"),
-    (60 * 60,           "more than 1 hour"),
+    (60 * 60 * 24, "more than 24 hours"),
+    (60 * 60, "more than 1 hour"),
 )
 
 # Small clock-skew leeway when judging "iat in the future" — most systems drift a bit.
@@ -47,11 +53,22 @@ _DIGITS_ONLY_RE = re.compile(r"^\d{13,19}$")
 
 # Field names that should never appear in a JWT payload (encoded, not encrypted).
 SENSITIVE_FIELDS = {
-    "password", "passwd", "pwd",
-    "secret", "api_key", "apikey", "token", "access_token", "refresh_token",
-    "ssn", "credit_card", "card_number", "cvv",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "api_key",
+    "apikey",
+    "token",
+    "access_token",
+    "refresh_token",
+    "ssn",
+    "credit_card",
+    "card_number",
+    "cvv",
     "email",  # email is borderline but common enough to flag
 }
+
 
 # Severity levels — ordered so higher-severity findings sort first.
 class Severity(Enum):
@@ -60,12 +77,14 @@ class Severity(Enum):
     INFO = "INFO"
     PASS = "PASS"
 
+
 # Letter grade derived from the set of findings.
 class Grade(Enum):
     A = "A"
     B = "B"
     C = "C"
     F = "F"
+
 
 # Stable sort order for findings — CRITICAL first, PASS last.
 _SEVERITY_ORDER = {
@@ -75,6 +94,7 @@ _SEVERITY_ORDER = {
     Severity.PASS: 3,
 }
 
+
 @dataclass(frozen=True)
 class Finding:
     severity: Severity
@@ -83,11 +103,13 @@ class Finding:
     # Short, actionable next step. Optional so legacy callers stay valid.
     recommendation: str | None = None
 
+
 @dataclass(frozen=True)
 class Report:
     findings: tuple[Finding, ...]
     grade: Grade
     counts: dict[Severity, int] = field(default_factory=dict)
+
 
 # Public entry point. The command layer should only ever call this — never the
 # individual `_audit_*` helpers or `audit()` directly — so grading and sorting
@@ -98,10 +120,12 @@ def run_audit(
     *,
     required_claims: frozenset[str] = frozenset(),
 ) -> Report:
-    findings = tuple(sorted(
-        audit(header, payload, required_claims=required_claims),
-        key=_finding_sort_key,
-    ))
+    findings = tuple(
+        sorted(
+            audit(header, payload, required_claims=required_claims),
+            key=_finding_sort_key,
+        )
+    )
     return Report(
         findings=findings,
         grade=_grade(findings),
@@ -133,6 +157,7 @@ def audit(
 
 # Grading
 
+
 # Single source of truth for grade boundaries. `--strict` lives at the command
 # layer; this function never sees it.
 def _grade(findings: Iterable[Finding]) -> Grade:
@@ -148,7 +173,7 @@ def _grade(findings: Iterable[Finding]) -> Grade:
 
 
 def _count_by_severity(findings: Iterable[Finding]) -> dict[Severity, int]:
-    counts = {s: 0 for s in Severity}
+    counts = dict.fromkeys(Severity, 0)
     for f in findings:
         counts[f.severity] += 1
     return counts
@@ -163,41 +188,56 @@ def _finding_sort_key(f: Finding) -> tuple[int, str]:
 def _audit_algorithm(header: dict) -> list[Finding]:
     alg = str(header.get("alg", "")).upper()
     if alg == "NONE":
-        return [Finding(
-            Severity.CRITICAL, "alg",
-            "alg:none means the token carries no signature",
-            "Reject tokens whose header advertises alg:none at the verifier.",
-        )]
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "alg",
+                "alg:none means the token carries no signature",
+                "Reject tokens whose header advertises alg:none at the verifier.",
+            )
+        ]
     if alg in SYMMETRIC_ALGORITHMS:
-        return [Finding(
-            Severity.WARN, "alg",
-            f"{alg} is symmetric — the shared secret must be strong or it can be brute-forced",
-            "Use a cryptographically strong secret (jwt-toolkit generate-secret) "
-            "or migrate to an asymmetric algorithm.",
-        )]
+        return [
+            Finding(
+                Severity.WARN,
+                "alg",
+                f"{alg} is symmetric — the shared secret must be strong or it can be brute-forced",
+                "Use a cryptographically strong secret (jwt-toolkit generate-secret) "
+                "or migrate to an asymmetric algorithm.",
+            )
+        ]
     if alg in ASYMMETRIC_ALGORITHMS:
         return [Finding(Severity.PASS, "alg", f"{alg} uses asymmetric keys")]
-    return [Finding(
-        Severity.WARN, "alg",
-        f"Unknown algorithm: {alg or '(missing)'}",
-        "Pin the verifier to an explicit allow-list of algorithms.",
-    )]
+    return [
+        Finding(
+            Severity.WARN,
+            "alg",
+            f"Unknown algorithm: {alg or '(missing)'}",
+            "Pin the verifier to an explicit allow-list of algorithms.",
+        )
+    ]
 
 
 def _audit_typ(header: dict) -> list[Finding]:
     if "typ" not in header:
-        return [Finding(
-            Severity.INFO, "typ",
-            "No typ header — consumers cannot distinguish JWTs from other JOSE objects",
-        )]
+        return [
+            Finding(
+                Severity.INFO,
+                "typ",
+                "No typ header — consumers cannot distinguish JWTs from other JOSE objects",
+            )
+        ]
     typ = str(header["typ"]).upper()
     if typ in _VALID_TYP_VALUES:
         return [Finding(Severity.PASS, "typ", f"typ={header['typ']}")]
-    return [Finding(
-        Severity.WARN, "typ",
-        f"Unexpected typ value: {typ!r}",
-        "Set typ to 'JWT' or 'at+jwt' so verifiers can reject unrelated tokens.",
-    )]
+    return [
+        Finding(
+            Severity.WARN,
+            "typ",
+            f"Unexpected typ value: {typ!r}",
+            "Set typ to 'JWT' or 'at+jwt' so verifiers can reject unrelated tokens.",
+        )
+    ]
 
 
 def _audit_kid_injection(header: dict) -> list[Finding]:
@@ -205,18 +245,24 @@ def _audit_kid_injection(header: dict) -> list[Finding]:
     if kid is None:
         return []
     if not isinstance(kid, str):
-        return [Finding(
-            Severity.WARN, "kid",
-            f"kid is not a string ({type(kid).__name__}) — verifiers may mishandle it",
-        )]
+        return [
+            Finding(
+                Severity.WARN,
+                "kid",
+                f"kid is not a string ({type(kid).__name__}) — verifiers may mishandle it",
+            )
+        ]
     hit = next((c for c in _KID_DANGEROUS_CHARS if c in kid), None)
     if hit is not None:
-        return [Finding(
-            Severity.CRITICAL, "kid",
-            f"kid contains dangerous sequence {hit!r} — possible injection attempt",
-            "Look up keys by exact match against an allow-list; never concatenate kid "
-            "into a path, SQL query, or shell command.",
-        )]
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "kid",
+                f"kid contains dangerous sequence {hit!r} — possible injection attempt",
+                "Look up keys by exact match against an allow-list; never concatenate kid "
+                "into a path, SQL query, or shell command.",
+            )
+        ]
     return [Finding(Severity.PASS, "kid", "kid looks well-formed")]
 
 
@@ -227,26 +273,35 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
             continue
         value = header[name]
         if name == "jwk":
-            findings.append(Finding(
-                Severity.CRITICAL, "jwk",
-                "Header embeds a JWK — an attacker can ship their own key with the token",
-                "Ignore the embedded jwk header; resolve keys from a server-side trust store.",
-            ))
+            findings.append(
+                Finding(
+                    Severity.CRITICAL,
+                    "jwk",
+                    "Header embeds a JWK — an attacker can ship their own key with the token",
+                    "Ignore the embedded jwk header; resolve keys from a server-side trust store.",
+                )
+            )
             continue
         # jku, x5u, x5c — URLs to remote key material.
         url = str(value) if not isinstance(value, list) else (value[0] if value else "")
         if isinstance(url, str) and url.lower().startswith("http://"):
-            findings.append(Finding(
-                Severity.CRITICAL, name,
-                f"{name} uses plain HTTP — key material can be MITM'd",
-                f"Require HTTPS for {name}, and pin to an allow-list of hosts.",
-            ))
+            findings.append(
+                Finding(
+                    Severity.CRITICAL,
+                    name,
+                    f"{name} uses plain HTTP — key material can be MITM'd",
+                    f"Require HTTPS for {name}, and pin to an allow-list of hosts.",
+                )
+            )
         else:
-            findings.append(Finding(
-                Severity.WARN, name,
-                f"{name} header references external key material",
-                f"Pin {name} to an allow-list of trusted hosts; never blindly fetch.",
-            ))
+            findings.append(
+                Finding(
+                    Severity.WARN,
+                    name,
+                    f"{name} header references external key material",
+                    f"Pin {name} to an allow-list of trusted hosts; never blindly fetch.",
+                )
+            )
     return findings
 
 
@@ -255,11 +310,14 @@ def _audit_expiry(payload: dict) -> list[Finding]:
     exp = payload.get("exp")
     iat = payload.get("iat")
     if exp is None:
-        return [Finding(
-            Severity.WARN, "exp",
-            "No exp claim — token never expires",
-            "Always set exp; short-lived tokens limit blast radius if leaked.",
-        )]
+        return [
+            Finding(
+                Severity.WARN,
+                "exp",
+                "No exp claim — token never expires",
+                "Always set exp; short-lived tokens limit blast radius if leaked.",
+            )
+        ]
     if not isinstance(exp, (int, float)):
         return [Finding(Severity.WARN, "exp", f"exp is not numeric ({type(exp).__name__})")]
 
@@ -272,15 +330,20 @@ def _audit_expiry(payload: dict) -> list[Finding]:
     for threshold, suffix in _LIFETIME_TIERS:
         if lifetime > threshold:
             severity = (
-                Severity.CRITICAL if threshold >= 60 * 60 * 24 * 30
-                else Severity.WARN if threshold >= 60 * 60 * 24
+                Severity.CRITICAL
+                if threshold >= 60 * 60 * 24 * 30
+                else Severity.WARN
+                if threshold >= 60 * 60 * 24
                 else Severity.INFO
             )
-            return [Finding(
-                severity, "exp",
-                f"Token lifetime is {suffix}",
-                "Shorten the TTL; pair access tokens with a refresh-token rotation flow.",
-            )]
+            return [
+                Finding(
+                    severity,
+                    "exp",
+                    f"Token lifetime is {suffix}",
+                    "Shorten the TTL; pair access tokens with a refresh-token rotation flow.",
+                )
+            ]
     return [Finding(Severity.PASS, "exp", "Token expiry looks reasonable")]
 
 
@@ -303,25 +366,34 @@ def _audit_iat(payload: dict) -> list[Finding]:
         return [Finding(Severity.WARN, "iat", f"iat is not numeric ({type(iat).__name__})")]
     exp = payload.get("exp")
     if isinstance(exp, (int, float)) and exp < iat:
-        return [Finding(
-            Severity.CRITICAL, "iat",
-            "exp is earlier than iat — token is malformed and may be rejected unpredictably",
-        )]
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "iat",
+                "exp is earlier than iat — token is malformed and may be rejected unpredictably",
+            )
+        ]
     if iat > time.time() + _IAT_FUTURE_LEEWAY_SECONDS:
-        return [Finding(
-            Severity.WARN, "iat",
-            "iat is in the future — clock skew or a forged token",
-        )]
+        return [
+            Finding(
+                Severity.WARN,
+                "iat",
+                "iat is in the future — clock skew or a forged token",
+            )
+        ]
     return [Finding(Severity.PASS, "iat", "iat looks sane")]
 
 
 def _audit_jti(payload: dict) -> list[Finding]:
     if "jti" not in payload:
-        return [Finding(
-            Severity.INFO, "jti",
-            "No jti claim — replay-defense via a token blocklist is harder",
-            "Issue a unique jti per token so revocation and replay-detection are possible.",
-        )]
+        return [
+            Finding(
+                Severity.INFO,
+                "jti",
+                "No jti claim — replay-defense via a token blocklist is harder",
+                "Issue a unique jti per token so revocation and replay-detection are possible.",
+            )
+        ]
     return []
 
 
@@ -341,7 +413,8 @@ def _audit_claims(
 def _audit_sensitive_fields(payload: dict) -> list[Finding]:
     return [
         Finding(
-            Severity.WARN, key,
+            Severity.WARN,
+            key,
             f"Payload contains sensitive field {key!r} — JWTs are encoded, not encrypted",
             "Move secrets out of the payload; pass them via a confidential side-channel.",
         )
@@ -375,22 +448,26 @@ def _audit_sensitive_values(payload: dict) -> list[Finding]:
     findings: list[Finding] = []
     if email_paths:
         label = "paths" if len(email_paths) > 1 else "path"
-        findings.append(Finding(
-            Severity.WARN,
-            "payload",
-            f"Email-like value{'' if len(email_paths) == 1 else 's'} at {label}: "
-            + ", ".join(email_paths),
-            "Avoid embedding PII in JWT payloads; use an opaque subject identifier.",
-        ))
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "payload",
+                f"Email-like value{'' if len(email_paths) == 1 else 's'} at {label}: "
+                + ", ".join(email_paths),
+                "Avoid embedding PII in JWT payloads; use an opaque subject identifier.",
+            )
+        )
     if card_paths:
         label = "paths" if len(card_paths) > 1 else "path"
-        findings.append(Finding(
-            Severity.CRITICAL,
-            "payload",
-            f"Credit-card-like value{'' if len(card_paths) == 1 else 's'} "
-            f"(Luhn-valid) at {label}: " + ", ".join(card_paths),
-            "Never place card data in a JWT — it is base64, not encryption.",
-        ))
+        findings.append(
+            Finding(
+                Severity.CRITICAL,
+                "payload",
+                f"Credit-card-like value{'' if len(card_paths) == 1 else 's'} "
+                f"(Luhn-valid) at {label}: " + ", ".join(card_paths),
+                "Never place card data in a JWT — it is base64, not encryption.",
+            )
+        )
     return findings
 
 
