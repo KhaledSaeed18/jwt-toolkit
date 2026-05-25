@@ -1,0 +1,35 @@
+name: Documentation
+description: Report unclear, missing, or incorrect documentation.
+title: "[docs]: "
+labels: ["documentation", "triage"]
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: Where
+      description: Link to the file, section, or command help text that needs work.
+      placeholder: "README.md > Examples > Audit a token"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+      description: Describe what is unclear, outdated, or incorrect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+      description: If you have a concrete improvement in mind, share it here. A PR is welcome.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I have searched existing issues and confirmed this is not a duplicate.
+          required: true

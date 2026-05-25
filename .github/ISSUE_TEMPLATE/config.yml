@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/KhaledSaeed18/jwt-toolkit/discussions
+    about: Ask a question, share a use case, or discuss an idea before filing an issue.
+  - name: Security vulnerability
+    url: https://github.com/KhaledSaeed18/jwt-toolkit/security/advisories/new
+    about: Report a security vulnerability privately. Do not open a public issue.

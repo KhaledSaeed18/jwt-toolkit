@@ -1,6 +1,19 @@
 # JWT Toolkit
 
-A command-line toolkit for inspecting, verifying, cracking, and securing JSON Web Tokens — built to expose how JWT signing works and where it breaks.
+<p align="center">
+  <img src="assets/images/demo.jpg" alt="jwt-toolkit demo" width="820">
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/jwt-toolkit/"><img alt="PyPI" src="https://img.shields.io/pypi/v/jwt-toolkit.svg?color=blue"></a>
+  <a href="https://pypi.org/project/jwt-toolkit/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/jwt-toolkit.svg"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/publish.yml"><img alt="Publish" src="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/publish.yml/badge.svg"></a>
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit"><img alt="Status" src="https://img.shields.io/pypi/status/jwt-toolkit.svg"></a>
+</p>
+
+A command-line toolkit for inspecting, verifying, cracking, and securing JSON Web Tokens. Built to expose how JWT signing works and where it breaks.
 
 Use it to audit tokens for misconfigurations, verify signatures and standard claims (including JWKS), brute-force weak HMAC secrets against a wordlist, forge defensive attack-shaped variants for self-audit, and generate cryptographically strong secrets.
 
@@ -28,7 +41,7 @@ Requires Python 3.13+.
 # Decode and pretty-print a token
 jwt-toolkit decode <token>
 
-# Static security audit (no key needed) — flags alg=none, weak HMAC, jwk-in-header, etc.
+# Static security audit (no key needed) flags alg=none, weak HMAC, jwk-in-header, etc.
 jwt-toolkit audit <token>
 jwt-toolkit audit <token> --strict --json
 
@@ -56,16 +69,166 @@ Run `jwt-toolkit COMMAND --help` for command-specific options.
 
 ## Commands
 
-| Command              | Purpose                                                                         |
-| -------------------- | ------------------------------------------------------------------------------- |
-| `decode`             | Decode a JWT and pretty-print its header and payload.                           |
-| `sign`               | Mint a new JWT signed with an HMAC secret or an asymmetric key.                 |
-| `audit`              | Static security analysis of a JWT — no key required. CVE-referenced findings.  |
-| `verify`             | Verify the signature and standard claims of a JWT (supports JWKS).              |
-| `forge`              | Emit defensive attack-shaped variants of a JWT for self-audit.                  |
-| `crack`              | Brute-force a weak HMAC secret using a wordlist.                                |
-| `generate-secret`    | Emit a cryptographically strong random secret.                                  |
-| `download-wordlists` | Fetch the latest common-secrets wordlist.                                       |
+| Command              | Purpose                                                                        |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `decode`             | Decode a JWT and pretty-print its header and payload.                          |
+| `sign`               | Mint a new JWT signed with an HMAC secret or an asymmetric key.                |
+| `audit`              | Static security analysis of a JWT, no key required. CVE-referenced findings.   |
+| `verify`             | Verify the signature and standard claims of a JWT (supports JWKS).             |
+| `forge`              | Emit defensive attack-shaped variants of a JWT for self-audit.                 |
+| `crack`              | Brute-force a weak HMAC secret using a wordlist.                               |
+| `generate-secret`    | Emit a cryptographically strong random secret.                                 |
+| `download-wordlists` | Fetch the latest common-secrets wordlist.                                      |
+
+## Examples
+
+A few showcases of what the output looks like. Tokens here are throwaway test tokens, never use these secrets in production.
+
+### Sign a token
+
+Input:
+
+```bash
+jwt-toolkit sign \
+  --payload '{"sub":"alice","role":"admin","iat":1700000000}' \
+  --secret mysecret123
+```
+
+Output:
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcwMDAwMDAwMH0.cPIGduvFlZtf6Xa3HFDkf8sV7v_8O5fn7_vW7-D1_0c
+```
+
+### Decode a token
+
+Input:
+
+```bash
+jwt-toolkit decode eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcwMDAwMDAwMH0.cPIGduvFlZtf6Xa3HFDkf8sV7v_8O5fn7_vW7-D1_0c
+```
+
+Output:
+
+```
+╭─────────────────── Header ────────────────────╮
+│ {                                             │
+│   "alg": "HS256",                             │
+│   "typ": "JWT"                                │
+│ }                                             │
+╰───────────────────────────────────────────────╯
+╭─────────────────── Payload ───────────────────╮
+│ {                                             │
+│   "sub": "alice",                             │
+│   "role": "admin",                            │
+│   "iat": 1700000000                           │
+│ }                                             │
+╰───────────────────────────────────────────────╯
+╭────────────────── Signature ──────────────────╮
+│ cPIGduvFlZtf6Xa3HFDkf8sV7v_8O5fn7_vW7-D1_0c   │
+╰───────────────────────────────────────────────╯
+```
+
+### Audit a token
+
+Input:
+
+```bash
+jwt-toolkit audit <token>
+```
+
+Output:
+
+```
+╭────────────── Security Verdict ──────────────╮
+│ Verdict : WEAK                               │
+│ Grade   : B                                  │
+│                                              │
+│ CRITICAL : 0   WARN : 2   INFO : 3   PASS : 2│
+╰──────────────────────────────────────────────╯
+                       Findings
+┏━━━━━━━━━━┳───────┳────────────────────┳──────────────────────┓
+┃ Severity ┃ Field ┃ Detail             ┃ Recommendation       ┃
+┡━━━━━━━━━━╇───────╇────────────────────╇──────────────────────┩
+│ WARN     │ alg   │ HS256 is symmetric │ Use a strong secret  │
+│ WARN     │ exp   │ No exp claim       │ Always set exp       │
+│ INFO     │ aud   │ Missing aud claim  │                      │
+│ INFO     │ iss   │ Missing iss claim  │                      │
+│ INFO     │ jti   │ No jti claim       │ Issue a unique jti   │
+│ PASS     │ iat   │ iat looks sane     │                      │
+│ PASS     │ typ   │ typ=JWT            │                      │
+└──────────┴───────┴────────────────────┴──────────────────────┘
+```
+
+Add `--json` for machine-readable output and `--strict` to fail on warnings.
+
+### Verify a token
+
+Input:
+
+```bash
+jwt-toolkit verify <token> --secret mysecret123
+```
+
+Output:
+
+```
+              Verification Checks
+┏━━━━━━━━┳───────────┳────────────────────┓
+┃ Result ┃ Check     ┃ Detail             ┃
+┡━━━━━━━━╇───────────╇────────────────────┩
+│ PASS   │ signature │ Signature is valid │
+│ WARN   │ exp       │ No expiry claim    │
+└────────┴───────────┴────────────────────┘
+╭──────────────────────────────────────────╮
+│ VALID                                    │
+╰──────────────────────────────────────────╯
+```
+
+### Generate a strong secret
+
+Input:
+
+```bash
+jwt-toolkit generate-secret --bits 256 --encoding base64
+```
+
+Output:
+
+```
+╭──────────────── Generated Secret ────────────────╮
+│ HTZhdhvS6GPEKeziu3Ey5d6NVf8da9mjjfQTFQD99o8=     │
+│                                                  │
+│ Encoding : base64                                │
+│ Length   : 256 bits (32 bytes)                   │
+│ Entropy  : 256 bits, strong                      │
+╰──────────────────────────────────────────────────╯
+```
+
+### Crack a weak secret
+
+Input:
+
+```bash
+jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8
+```
+
+Output:
+
+```
+╭──────────── Weak Secret Detected ────────────╮
+│ Secret: mysecret123                          │
+│                                              │
+│ Algorithm        : HS256                     │
+│ Position         : #1 of ~3 candidates       │
+│ Candidates tried : 1                         │
+│ Time elapsed     : 0.001s                    │
+│                                              │
+│ This secret is in a common wordlist.         │
+│ Generate a strong one with:                  │
+│   jwt-toolkit generate-secret                │
+╰──────────────────────────────────────────────╯
+```
 
 ## Scripting
 
@@ -78,7 +241,11 @@ JWT_TOOLKIT_QUIET=1 NO_COLOR=1 jwt-toolkit audit <token> --json
 
 ## Use responsibly
 
-`jwt-toolkit` is built for defensive work — auditing your own tokens, hardening your own systems, and learning how JWTs break. Only use it against tokens and systems you are authorized to test.
+`jwt-toolkit` is built for defensive work: auditing your own tokens, hardening your own systems, and learning how JWTs break. Only use it against tokens and systems you are authorized to test.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the codebase layout, development setup, branch and commit conventions, and the pull-request workflow.
 
 ## License
 

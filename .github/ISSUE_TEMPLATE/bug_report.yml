@@ -1,0 +1,104 @@
+name: Bug report
+description: Report something that is broken or behaves incorrectly.
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in the sections below so we can reproduce and fix the issue.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A clear, one or two sentence description of the bug.
+      placeholder: "jwt-toolkit audit crashes when the token has a nested array claim."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The exact command(s) you ran. Include the token or a minimal redacted equivalent if relevant.
+      placeholder: |
+        1. Run `jwt-toolkit audit eyJhbGciOi...`
+        2. Observe the traceback
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Paste the full output or traceback inside a code block.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: jwt-toolkit version
+      description: Output of `jwt-toolkit --version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: "3.13.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install method
+      options:
+        - pipx
+        - uv tool
+        - pip
+        - from source
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15.2 / Ubuntu 24.04 / Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else worth noting. Environment variables (`JWT_TOOLKIT_*`, `NO_COLOR`), related issues, screenshots, etc.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I have searched existing issues and confirmed this is not a duplicate.
+          required: true
+        - label: I am running the latest released version of jwt-toolkit, or have noted the version above.
+          required: true
+        - label: This is not a security vulnerability. Security issues must be reported privately via GitHub Security Advisories.
+          required: true

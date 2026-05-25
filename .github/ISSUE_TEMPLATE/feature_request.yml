@@ -1,0 +1,67 @@
+name: Feature request
+description: Propose a new command, flag, audit rule, or capability.
+title: "[feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please describe the problem and the proposed solution clearly so we can evaluate it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is the use case or pain point that this feature would solve?
+      placeholder: "I want to audit a batch of tokens at once and currently have to script around the single-token CLI."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the feature. If it adds a command or flag, sketch the CLI surface.
+      placeholder: |
+        Add `jwt-toolkit audit-batch <file>` where each line of `<file>` is a JWT.
+        Output a JSON array of audit results.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you have tried or other designs you considered.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area
+      options:
+        - new command
+        - new flag on existing command
+        - new audit rule
+        - new algorithm or key format
+        - output format (json, table, etc.)
+        - performance
+        - documentation
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Links to specs, CVEs, blog posts, related issues, or example tokens that motivate the request.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I have searched existing issues and confirmed this is not a duplicate.
+          required: true
+        - label: This feature fits the defensive, learning-focused scope of jwt-toolkit.
+          required: true
