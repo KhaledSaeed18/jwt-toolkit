@@ -1,6 +1,6 @@
 ---
 name: new-command
-description: Scaffold a new Click subcommand for jwt-toolkit. Creates `jwt_toolkit/commands/<name>.py`, registers it in `jwt_toolkit/cli/__init__.py` (import + `add_command` + aligned `CLI_HELP` entry), and creates a matching `tests/test_cmd_<name>.py`. Enforces the project's CLI, secret-handling, and `--json` conventions. Use only when adding a new top-level `jwt-toolkit <verb>` command.
+description: Scaffold a new top-level Click subcommand for jwt-toolkit (the `jwt-toolkit <verb>` form, like `decode`, `audit`, `verify`). Creates `jwt_toolkit/commands/<name>.py`, registers it in `jwt_toolkit/cli/__init__.py` (import + `add_command` + aligned `CLI_HELP` entry), and writes a matching `tests/test_cmd_<name>.py`. Enforces the project's CLI conventions: `console`-only output, secrets as options not positional args, typed `core/errors` raised and translated, `--json` payloads carrying `JSON_SCHEMA_VERSION`. Use this skill only for **new top-level verbs**. Don't use it for adding flags or behavior to an existing command, for creating subcommands under an existing group, or for refactors — edit the existing file directly.
 disable-model-invocation: true
 ---
 
@@ -10,20 +10,21 @@ disable-model-invocation: true
 
 ## Step 0 — Confirm scope
 
-**Do not scaffold blind.** Before writing files, get one short sentence from the user covering:
+**Do not scaffold blind.** Before writing files, get a short sentence from the user covering:
 
-1. What's the security outcome? (One line that could go in the help string.)
-2. What inputs does it take? Token? Key/secret? Wordlist? JWKS URL? Other.
-3. Does it produce structured output? If yes, `--json` is required.
-4. Does it talk to the network? If yes, the only acceptable destination is a JWKS endpoint via `jwt_toolkit.core.jwks` — confirm.
-5. Is it read-only inspection, mutation (mint/forge), or attack-surface (crack)? This drives default flags and help-text voice.
+1. **Security outcome** — one line that could go in the `help=` string. ("Reveal which JWKS endpoint a token claims it was signed by.")
+2. **Inputs** — token? key/secret? wordlist? JWKS URL? File path? Stdin? Other.
+3. **Structured output** — does it produce something a script would parse? If yes, `--json` is required and you must commit to a field set as public API.
+4. **Network** — does it make HTTP calls? If yes, the only acceptable destination is a JWKS endpoint via `jwt_toolkit.core.jwks`. No other module is allowed outbound network. Confirm.
+5. **Filesystem side effects** — does it write any file outside `tmp_path` in tests? Defaults must respect the user's cwd; never silently write into `$HOME`, `/tmp`, or other locations.
+6. **Risk category** — read-only inspection (like `decode`, `audit`), mutation that produces output the user keeps (like `sign`, `forge`, `generate-secret`), or attack-surface (like `crack`). This drives default flags, help-text voice, and the inverted exit-code/color contract from [[project-jwt-toolkit]] if applicable.
 
-If any answer is "I'm not sure", stop and ask the user. Scaffolding is cheap to redo but expensive to undo after tests reference it.
+If any answer is "I'm not sure", stop and ask. Scaffolding is cheap to redo but expensive to undo after tests reference it.
 
 ## Step 1 — Validate the name
 
 - Must match `^[a-z][a-z0-9-]*$` (kebab) or `^[a-z][a-z0-9_]*$` (snake). Reject anything else with a one-line error.
-- Must not collide with an existing command. Read `jwt_toolkit/cli/__init__.py` first — if the name is taken, stop.
+- **Must not collide with an existing command.** Before proposing the name, run `awk '/^Commands:/,/^$/' jwt_toolkit/cli/__init__.py | grep -E '^\s+[a-z-]+'` to list current verbs. As of writing those are: `decode`, `sign`, `audit`, `verify`, `forge`, `crack`, `generate-secret`, `download-wordlists`. If the requested name matches or near-matches one of these, stop and ask the user to pick another or to edit the existing command directly.
 
 ## Step 2 — Write `jwt_toolkit/commands/<snake_name>.py`
 
@@ -60,6 +61,7 @@ def <snake_name>(token: str, as_json: bool) -> None:
 - **Secrets and keys are options, never positional arguments.** `--secret`, `--private-key`. Positional shows up in shell history and `ps`. Don't echo their values in errors; refer to the flag name only.
 - **Errors raise `click.ClickException("...")`** with a one-sentence user-facing message. Deeper layers raise from `jwt_toolkit.core.errors`; translate them at the command boundary.
 - **Help-text voice matches the rest of the CLI.** One short sentence, security-outcome shaped, no implementation detail. ("Verify the signature and standard claims of a JWT." — not "Calls cryptography library to check signature.")
+- **Honor global flags** `--no-banner`, `--quiet`, `--no-color`, plus the env equivalents `JWT_TOOLKIT_QUIET=1` / `NO_COLOR=1`. Using `console.print(...)` and `click.echo(...)` (not bare `print`) is what makes this automatic — the `console` instance is wired up in `jwt_toolkit/cli/console.py` to read those signals. If you bypass `console`, you break scripting.
 - **No new dependencies.** If you think you need one, stop and ask the user — every new dep has to be justified per `CONTRIBUTING.md`.
 - **Logic belongs in `core/`.** If the command module exceeds ~60 lines of non-flag-parsing code, you're doing too much here. See `jwt_toolkit/core/CLAUDE.md`.
 
@@ -75,7 +77,13 @@ Three edits, all needed:
    ```python
    cli.add_command(<snake_name>)
    ```
-3. **`CLI_HELP` block** — add a line under `Commands:` matching the **exact column alignment** of existing entries. After editing, count columns: command name is left-justified in a fixed-width field, followed by two spaces, followed by the description. Verify alignment by reading the file back; if your line drifts, fix it.
+3. **`CLI_HELP` block** — add a line under `Commands:` matching the existing column alignment. Don't eyeball it. After editing, verify with:
+
+   ```sh
+   awk '/^Commands:/,/^$/' jwt_toolkit/cli/__init__.py | grep -E '^\s+[a-z-]+' | awk '{ printf "%2d  %s\n", length($1), $1 }'
+   ```
+
+   The widths should cluster — every command name shorter than the longest is left-justified in the same fixed field. If your new line's name is shorter than the longest and you wrote it with the wrong number of spaces, the description column drifts. Fix it before moving on; drift is visible to every CLI user forever.
 
 Don't reorder existing entries. Append in the conventional place (alphabetical within the block, unless the existing order is grouped by purpose — match what's there).
 
@@ -92,17 +100,16 @@ Tests run in parallel (`-n auto`). No shared mutable state, no `os.chdir`, no en
 
 ## Step 5 — Verify
 
-Run in this order:
+Tight inner loop while iterating on the new command's tests:
 
 ```sh
 make fmt
-make lint
-make typecheck
 uv run pytest -n auto tests/test_cmd_<snake_name>.py
-make test         # ensure coverage stays ≥ 80
 ```
 
-Then run `/check` (the full gate) before handing off. If coverage on the new module is below the threshold, add tests; do not exclude the file.
+Then **invoke `/check` for the full gate** before handing off — it runs lint + typecheck + tests + bandit + pip-audit consistently with CI, and that's what the project gates on. If coverage on the new module is below 80%, add tests; do not exclude the file from coverage reporting.
+
+After `/check` is green, **run `/security-review`** — the new command touches public-API surfaces (a new `--json` schema, new help-text voice, a new entry in `CLI_HELP`) and the review catches voice drift and secret-leakage in error messages that the gate doesn't.
 
 ## Step 6 — Do not
 

@@ -1,6 +1,6 @@
 ---
 name: security-review
-description: Domain-aware security review of the current diff for jwt-toolkit. Goes beyond generic linters — checks for JWT-specific regressions (alg=none acceptance, algorithm confusion, non-constant-time comparisons), secret leakage in output and exceptions, weakened defaults, public-API breaks (`JSON_SCHEMA_VERSION`, error codes), layering violations (Click/Rich in `core/`), and unsafe I/O. Use before opening a PR that touches `core/`, `commands/`, `crypto`, `auditor`, `forge`, or any error path.
+description: Domain-aware security review of the current diff for jwt-toolkit. Goes beyond bandit/ruff — catches JWT-specific regressions (alg=none acceptance, algorithm confusion, non-constant-time signature/MAC comparison, JWKS SSRF), secret leakage in errors and output, public-API breaks (`JSON_SCHEMA_VERSION` and `core/errors.py` codes), layering violations (Click/Rich/network in `core/`), wordlist DoS shapes, and runtime dependency drift. Use this skill proactively whenever the user asks "is this safe to merge", "did I introduce a security regression", "review the diff", "check for secret leaks", before opening a PR that touches `jwt_toolkit/` source, or after finishing changes to `core/`, `commands/`, `crypto`, `auditor`, `forge`, `jwks`, error handling, or anything affecting `--json` output. Skip if the diff is pure documentation, `.claude/`, or other meta changes with no source touched.
 ---
 
 # /security-review — diff-aware security review
@@ -17,20 +17,23 @@ git diff origin/main...HEAD
 
 If the branch is `main` (no PR yet), diff against the last tag instead: `git diff $(git describe --tags --abbrev=0)...HEAD`.
 
-Group the changes by area and only run the checks for areas that were touched. **Do not** review areas with no diff — that's noise and gives false confidence.
+**Short-circuit on docs/meta-only diffs.** If `git diff --name-only origin/main...HEAD` returns only paths under `*.md`, `.claude/`, `.github/ISSUE_TEMPLATE/`, `.cspell.json`, `.gitignore`, `assets/`, or `LICENSE`, stop here and report: "No source diff requiring security review — diff is documentation/meta only." Don't walk every area producing "skipped — no diff" 10 times; that's noise and the user is asking the wrong question.
+
+Otherwise, group the touched files by area and run *only* the matching checks. Reviewing untouched areas inflates the report and gives false confidence in coverage.
 
 | Area touched | Checks below |
 |---|---|
-| `core/crypto.py` | Crypto invariants |
-| `core/auditor.py` | Audit rules |
-| `core/jwks.py` | Network / JWKS |
-| `core/decoder.py`, `core/encoding.py` | Parsing |
-| `core/forge.py` | Forge surface |
-| `core/errors.py` | Error model |
-| `commands/*` | Command layer |
-| `cli/*` | CLI plumbing |
-| `wordlists/`, `crack.py` | Wordlist handling |
+| `jwt_toolkit/core/crypto.py` | Crypto invariants |
+| `jwt_toolkit/core/auditor.py` | Audit rules |
+| `jwt_toolkit/core/jwks.py` | Network / JWKS |
+| `jwt_toolkit/core/decoder.py`, `jwt_toolkit/core/encoding.py` | Parsing |
+| `jwt_toolkit/core/forge.py` | Forge surface |
+| `jwt_toolkit/core/errors.py` | Error model |
+| `jwt_toolkit/commands/*` | Command layer |
+| `jwt_toolkit/cli/*` | CLI plumbing |
+| `jwt_toolkit/core/crypto.py`, `jwt_toolkit/commands/crack.py`, `wordlists/` | Wordlist handling |
 | `pyproject.toml`, `uv.lock` | Dependencies |
+| `tests/**` | Tests |
 
 ## Step 2 — Run the checks
 
@@ -48,13 +51,14 @@ Group the changes by area and only run the checks for areas that were touched. *
 - Does the rule's `headline` reflect the **security outcome**, not the technical event? ("Algorithm is symmetric — sender and verifier must share the secret" beats "alg field is HS256".)
 - Does the rule emit false positives on benign tokens? Spot-check with a known-good fixture from `tests/conftest.py`.
 
-### Network / JWKS (`core/jwks.py`)
+### Network / JWKS (`jwt_toolkit/core/jwks.py`)
 
-- Is `core/jwks.py` still the **only** module making outbound HTTP requests? Grep the diff for `urllib`, `urlopen`, `httpx`, `requests`, `urllib3`. Anywhere else = **layering violation**.
-- Is the URL scheme restricted to `https://` (or `http://` only with an explicit opt-in)? An `http://` JWKS endpoint defeats the trust chain.
-- Are redirects followed across hosts? Cross-host redirects on JWKS = SSRF risk; pin the host.
-- Are responses size-bounded? An unbounded read on a remote endpoint is a DoS.
-- Do tests still avoid the network? Grep new tests for any HTTP call outside the offline fixtures.
+- Is `core/jwks.py` still the **only** module making outbound network calls? `git diff origin/main...HEAD -- jwt_toolkit/ ':!jwt_toolkit/core/jwks.py' | grep -E '\b(urllib|urlopen|httpx|requests|urllib3|aiohttp|socket\.)'` — any hit outside `jwks.py` is a **layering violation**.
+- Is the URL scheme **restricted to `https://`**? `urllib.request.urlopen` will happily follow `file://`, `ftp://`, `data:` — that's a classic SSRF / local-file-read primitive on a server-side caller. An allowlist of `{"https"}` (or `{"https", "http"}` only with an explicit opt-in) belongs at the URL-validation boundary, not inside the fetch helper.
+- Are redirects followed? Cross-host redirects on JWKS = SSRF risk; either disable redirects or pin the original host across the redirect chain.
+- Are responses size-bounded? An unbounded `read()` on a remote endpoint is a DoS on the user's machine. Look for `read()` without a size argument.
+- Is there a timeout on every network call? A missing timeout hangs the CLI on a slow endpoint forever.
+- Do tests still avoid the network? Grep new tests for any HTTP call outside the offline fixtures in `tests/conftest.py` / `tests/helpers.py`.
 
 ### Parsing (`core/decoder.py`, `core/encoding.py`)
 
@@ -77,18 +81,19 @@ Group the changes by area and only run the checks for areas that were touched. *
 
 ### Command layer (`jwt_toolkit/commands/*`)
 
-- Any `print(` introduced? Must be `console.print(...)` or `click.echo(...)`. `print` bypasses `--quiet`, `--no-color`, the rich theme, and breaks scripted consumers.
-- New `--json` field? It's now public API. Confirm `JSON_SCHEMA_VERSION` is bumped if any existing field was renamed/removed/retyped.
-- Any secret accepted as a positional argument? Must be `--secret` / `--private-key` (so it doesn't land in shell history / `ps`).
-- Error path: does the command raise `click.ClickException(...)` with a user-facing sentence, or does it leak a raw traceback? Tracebacks in normal failure paths leak structural info and confuse users.
-- Is `sys.exit(N)` used? Must be `raise click.ClickException(...)` so messaging routes through the project console.
-- Is `core/` logic invoked, or did logic creep into the command body? Commands stay thin.
+- Any `print(` introduced? `git diff origin/main...HEAD -- jwt_toolkit/commands/ | grep -E '^\+.*\bprint\('` — must be `console.print(...)` or `click.echo(...)`. `print` bypasses `--quiet`, `--no-color`, the rich theme, and breaks scripted consumers.
+- New `--json` field? It's now public API. Confirm `JSON_SCHEMA_VERSION` is bumped if any existing field was renamed, removed, or retyped. Adding optional fields is non-breaking.
+- Any secret accepted as a positional argument (i.e., `@click.argument("secret")` instead of `@click.option("--secret", ...)`)? Must be an option — positional secrets land in shell history and `ps`.
+- New `@click.command(help="...")` string: does it match the existing security-outcome voice ("Verify the signature and standard claims of a JWT.") rather than describing implementation ("Calls cryptography library...")? Voice drift here is visible to every CLI user forever.
+- Error path: does the command raise `click.ClickException(...)` with a one-sentence user-facing message, or does it let a raw traceback escape? Tracebacks in normal failure paths leak structural info and confuse users.
+- Is `sys.exit(N)` used? Must be `raise click.ClickException(...)` so messaging routes through the project console and exit code routing stays consistent.
+- Is `core/` logic invoked, or did logic creep into the command body? Commands stay thin (~60 lines of non-flag-parsing code is the rough ceiling).
 
 ### CLI plumbing (`jwt_toolkit/cli/*`)
 
-- Does the `Commands:` block in `CLI_HELP` still align column-wise after the change? Eyeball it; one drifted line stays visible to every user forever.
-- Is `--quiet` / `--no-color` / `--no-banner` still honored on the new path? Run the new command with `JWT_TOOLKIT_QUIET=1 NO_COLOR=1` mentally and confirm output is clean.
-- Did `JSON_SCHEMA_VERSION` change? If yes — every command's `--json` shape must remain consistent with the bump (i.e., the bump is justified by a real shape change).
+- Does the `Commands:` block in `CLI_HELP` still align column-wise? Eyeballing is unreliable. Run `awk '/^Commands:/,/^$/' jwt_toolkit/cli/__init__.py | grep -E '^\s+[a-z-]+' | awk '{print length($1), $1}'` — the lengths should cluster (all hit the same column for the description). One outlier = drift.
+- Is `--quiet` / `--no-color` / `--no-banner` still honored on the new path? Trace any new output call: if it goes through `console.print` it's fine; if it bypasses `console`, it's not.
+- Did `JSON_SCHEMA_VERSION` change? If yes — confirm a `--json` field was actually renamed/removed/retyped. A bump without a real shape change is also a finding (users will re-test their consumers for nothing).
 
 ### Wordlist handling (`crack` path)
 
@@ -98,9 +103,10 @@ Group the changes by area and only run the checks for areas that were touched. *
 
 ### Dependencies (`pyproject.toml`, `uv.lock`)
 
-- New runtime dependency? Per `CONTRIBUTING.md`, each must be justified. Note it as a finding requiring user confirmation.
-- A dependency pin loosened (e.g., `>=2.0` → `>=1.0`)? Could re-introduce a previously-fixed CVE. Run `make audit` to confirm.
-- Lockfile (`uv.lock`) touched without a corresponding `pyproject.toml` change? Confirm with the user — usually that's a `uv lock --upgrade` they meant to do explicitly.
+- **New runtime dependency** (added under `[project] dependencies`)? Per `CONTRIBUTING.md`, each runtime dep must be justified — note as a finding requiring user confirmation. **New dev dependency** (`[dependency-groups] dev`) is lower-risk but still worth a one-line "why".
+- A version pin loosened (e.g., `>=2.0` → `>=1.0`, or upper bound removed)? Could re-admit a previously-fixed CVE. Run `make audit` to confirm the new range is clean.
+- **`uv.lock` touched without a corresponding `pyproject.toml` change**? Usually means `uv lock --upgrade` was run. Confirm intent — a silent lockfile bump still ships in the wheel and can change behavior. Look at which packages moved: `git diff origin/main...HEAD -- uv.lock | grep -E '^[+-]version' | sort -u`.
+- Did a transitively-pinned package known to be sensitive (`cryptography`, `urllib3`, anything in the JWS/crypto path) move? That's worth surfacing even if the direct deps didn't change.
 
 ### Tests
 
@@ -119,7 +125,9 @@ Group findings by severity:
 
 For each finding: quote the line, give `file:line`, and state the rule it violates with a one-line fix. **Don't paraphrase code — quote it verbatim** so the user can grep.
 
-If nothing was touched in an area, say "skipped — no diff" so the user knows it wasn't silently passed. A short, accurate report beats a long one that bluffs.
+If an area was untouched, omit it from the report — Step 1's scoping already filtered it out. A short, accurate report beats a long one that pads with "skipped" lines or bluffs findings on code that didn't change.
+
+When the report has **zero findings**, say so in one sentence and stop. Don't manufacture a "consider" finding to look thorough — a clean PR is a clean PR, and noise erodes the user's trust in the next high-severity flag.
 
 ## Step 4 — Re-check after fixes
 

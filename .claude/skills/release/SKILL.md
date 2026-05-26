@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a new jwt-toolkit release end-to-end — preflight checks, semver guidance, version bump in `pyproject.toml`, commit, signed tag, push, GitHub Release that triggers `publish.yml` (PyPI Trusted Publishing), and post-publish verification. Use only when the user explicitly asks to release/cut/ship a new version.
+description: Cut a new jwt-toolkit release end-to-end — preflight (clean main, CI green, local `make check`, artifact build + twine check), semver guidance derived from the diff since the last tag, version bump in `pyproject.toml`, signed annotated tag, push, GitHub Release that triggers `publish.yml` (PyPI Trusted Publishing with `pypi` environment manual approval), and post-publish verification on PyPI's JSON API and a clean-env `uvx` install. Use only when the user explicitly asks to release, cut, ship, bump version, tag a release, or push to PyPI. Never infer a release from "wrap up" or "we're done".
 disable-model-invocation: true
 ---
 
@@ -19,7 +19,7 @@ Releases publish to PyPI, which is **irreversible**. Only proceed if the user ha
 
 ## Step 2 — Preflight (read-only)
 
-Run these in parallel; if any fails, stop and report:
+Run these mostly in parallel; if any fails, stop and report:
 
 1. **Branch & cleanliness.**
    - `git rev-parse --abbrev-ref HEAD` → must be `main`.
@@ -31,17 +31,26 @@ Run these in parallel; if any fails, stop and report:
 5. **Diff since last tag.** `git log <last-tag>..HEAD --oneline` — read every line.
 6. **CI status of `HEAD`.** `gh run list --branch main --limit 1 --json conclusion,status,headSha,event` — must be `conclusion: success` for the most recent CI run on the current SHA.
 7. **Full local gate.** Run `make check`. CI passing is necessary but not sufficient — local must also pass with the current working tree.
+8. **Build & artifact sanity** (catches metadata errors *before* tagging, not after — much cheaper):
+   ```sh
+   rm -rf dist && uv build && uvx twine check --strict dist/*
+   ```
+   Both wheel and sdist must report PASSED. A failure here means a metadata fix is needed in `pyproject.toml` (classifiers, license, long_description, etc.) before proceeding. **Do not tag if this fails** — the publish workflow runs the same check and will reject; you'll have spent a tag for nothing.
 
 ### Semver guidance from the diff
 
-Skim the commit subjects since the last tag and propose the bump kind to the user:
+Skim the commit subjects since the last tag and propose the bump kind to the user. Don't just look at messages — verify against the actual diff for the two highest-signal markers:
 
-- Any commit suggesting a CLI grammar change (renamed command/flag, removed flag, changed flag default that changes behavior) → **major**, or **minor with deprecation alias** if pre-1.0.
-- Any commit suggesting a `--json` shape change or a `JSON_SCHEMA_VERSION` bump → **major**.
+- **`JSON_SCHEMA_VERSION` changed**: `git diff <last-tag>..HEAD -- jwt_toolkit/cli/decoding.py | grep -E '^[+-].*JSON_SCHEMA_VERSION'` — any hit = `--json` shape changed → breaking.
+- **`core/errors.py` `code` strings changed or removed**: `git diff <last-tag>..HEAD -- jwt_toolkit/core/errors.py | grep -E '^-.*code='` — any removed code line = breaking for `--json` consumers.
+
+Combine that with commit subjects:
+
+- Any commit suggesting a CLI grammar change (renamed command/flag, removed flag, changed flag default) → **major**, or **minor with a deprecation alias** if pre-1.0.
 - New command, new flag (additive), new audit rule → **minor**.
 - Bug fix, docs, internal refactor with no observable change → **patch**.
 
-Pre-1.0 (`0.x.y`) note: this project is `0.x` and Alpha. Breaking changes go in `minor` bumps (`0.1.x` → `0.2.0`) and must be flagged in the release notes.
+Pre-1.0 (`0.x.y`) note: this project is `0.x` and Alpha. Breaking changes go in `minor` bumps (`0.1.x` → `0.2.0`) and **must** be flagged at the top of the release notes — the JSON-API consumers downstream may not be reading every release.
 
 ## Step 3 — Confirm with the user
 
@@ -91,11 +100,13 @@ In order, halting on any failure:
 ## Step 5 — Walk the publish workflow
 
 1. **Tell the user**: "The `pypi` GitHub Environment requires manual approval before the publish job runs. Open the Actions tab and approve it."
-2. Watch the workflow:
+2. **Find the specific publish run** triggered by this release — `gh run watch` without an id can latch onto the wrong run if anything else fires CI in the same window:
    ```sh
-   gh run watch
+   RUN_ID=$(gh run list --workflow=publish.yml --limit 5 --json databaseId,headBranch,event,headSha \
+     --jq '[.[] | select(.event == "release")][0].databaseId')
+   gh run watch "$RUN_ID"
    ```
-   If it fails, read the failure (`gh run view --log-failed`) and triage with the user before retrying. **Do not** re-tag the same version; if a publish fails after the tag was pushed but before PyPI got the artifact, you can re-run the workflow from the Actions tab without changing the tag.
+3. If it fails, read the failure (`gh run view --log-failed "$RUN_ID"`) and triage with the user before retrying. **Do not** re-tag the same version; if a publish fails after the tag was pushed but before PyPI got the artifact, you can re-run the workflow from the Actions tab without changing the tag.
 
 ## Step 6 — Post-publish verification
 
@@ -127,4 +138,6 @@ After `publish.yml` is green:
 
 - *Tag pushed, workflow failed before publish*: fix the cause, re-run the workflow from the Actions tab. Tag stays.
 - *Tag pushed, PyPI upload succeeded but workflow timed out*: verify with the curl check in Step 6. If the version is on PyPI, the release is real — don't republish.
+- *Tag pushed, workflow ran, PyPI **rejected** the upload* (e.g., HTTP 400 "File already exists", invalid classifier, README rendering error): PyPI is unforgiving — a version that has *ever* existed on PyPI can never be reused, even if it was yanked. Recovery: fix the cause in `pyproject.toml` or README, ship `A.B.(C+1)` immediately as a follow-up release. Don't try to delete and re-upload the same version. Delete the GitHub Release for the doomed tag (`gh release delete vA.B.C`) so users aren't pointed at a release that never made it to PyPI; the git tag can stay or be deleted with the user's okay.
 - *Wrong version bumped*: if NOT yet pushed → `git reset HEAD~1`, fix `pyproject.toml`, redo. If pushed but tag not pushed → `git revert` the bump commit, fix forward. If tag pushed but not yet published → talk to the user; usually the right answer is to publish anyway and immediately ship the corrected version as a follow-up.
+- *Manual approval timed out on the `pypi` environment*: re-run the workflow from the Actions tab. The OIDC token gets re-minted on the new run; no tag change needed.
