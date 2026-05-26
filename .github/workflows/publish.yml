@@ -37,11 +37,15 @@ jobs:
       url: https://pypi.org/p/jwt-toolkit
     permissions:
       id-token: write
+      attestations: write
+      contents: read
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v7
         with:
           name: dist
           path: dist/
-      - name: Publish to PyPI (Trusted Publishing)
+      - name: Publish to PyPI (Trusted Publishing + PEP 740 attestations)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
