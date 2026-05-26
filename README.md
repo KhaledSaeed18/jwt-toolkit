@@ -9,7 +9,7 @@
   <a href="https://pypi.org/project/jwt-toolkit/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/jwt-toolkit.svg"></a>
   <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/publish.yml"><img alt="Publish" src="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/publish.yml/badge.svg"></a>
-  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
   <a href="https://github.com/KhaledSaeed18/jwt-toolkit"><img alt="Status" src="https://img.shields.io/pypi/status/jwt-toolkit.svg"></a>
 </p>
 
@@ -245,8 +245,8 @@ JWT_TOOLKIT_QUIET=1 NO_COLOR=1 jwt-toolkit audit <token> --json
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the codebase layout, development setup, branch and commit conventions, and the pull-request workflow.
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/CONTRIBUTING.md) for the codebase layout, development setup, branch and commit conventions, and the pull-request workflow.
 
 ## License
 
-[MIT](./LICENSE) © Khaled Saeed
+[MIT](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/LICENSE) © Khaled Saeed
