@@ -428,7 +428,7 @@ wheels = [
 
 [[package]]
 name = "jwt-toolkit"
-version = "0.1.3"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
