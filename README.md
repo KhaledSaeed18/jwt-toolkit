@@ -5,17 +5,26 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/jwt-toolkit/"><img alt="PyPI" src="https://img.shields.io/pypi/v/jwt-toolkit.svg?color=blue"></a>
-  <a href="https://pypi.org/project/jwt-toolkit/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/jwt-toolkit.svg"></a>
-  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/publish.yml"><img alt="Publish" src="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/publish.yml/badge.svg"></a>
-  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <a href="https://github.com/KhaledSaeed18/jwt-toolkit"><img alt="Status" src="https://img.shields.io/pypi/status/jwt-toolkit.svg"></a>
+  <a href="https://pypi.org/project/jwt-toolkit/"><img alt="PyPI version" src="https://shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fjwt-toolkit%2Fjson&amp;query=%24.info.version&amp;label=PyPI&amp;prefix=v&amp;variant=secondary&amp;logo=pypi"></a>
+  <a href="https://pypi.org/project/jwt-toolkit/"><img alt="Python 3.13+" src="https://shieldcn.dev/badge/Python-3.13%2B.svg?variant=secondary&amp;logo=python"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/actions/workflows/ci.yml"><img alt="CI status" src="https://shieldcn.dev/github/ci/KhaledSaeed18/jwt-toolkit.svg?variant=secondary"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/LICENSE"><img alt="License: MIT" src="https://shieldcn.dev/github/license/KhaledSaeed18/jwt-toolkit.svg?variant=secondary"></a>
+  <a href="https://github.com/KhaledSaeed18/jwt-toolkit/stargazers"><img alt="GitHub stars" src="https://shieldcn.dev/github/stars/KhaledSaeed18/jwt-toolkit.svg?variant=secondary"></a>
 </p>
 
 A command-line toolkit for inspecting, verifying, cracking, and securing JSON Web Tokens. Built to expose how JWT signing works and where it breaks.
 
 Use it to audit tokens for misconfigurations, verify signatures and standard claims (including JWKS), brute-force weak HMAC secrets against a wordlist, forge defensive attack-shaped variants for self-audit, and generate cryptographically strong secrets.
+
+- **Decode** any JWT and pretty-print its header, payload, and signature.
+- **Audit** tokens with no key required, flagging `alg=none`, weak HMAC, `jwk`-in-header, and other CVE-referenced misconfigurations.
+- **Verify** signatures and standard claims (`exp`, `nbf`, `iat`, `iss`, `aud`), including remote JWKS.
+- **Sign** new tokens with an HMAC secret or an asymmetric key.
+- **Forge** attack-shaped variants (`alg=none`, algorithm confusion) so you can test your own verifier.
+- **Crack** weak HMAC secrets against a wordlist, streamed line-by-line.
+- **Generate** cryptographically strong random secrets.
+
+Built on `cryptography` with constant-time signature comparison, no runtime dependency on `pyjwt` or `python-jose` — the JWS logic is implemented in the open so you can read exactly how verification works.
 
 ## Installation
 
