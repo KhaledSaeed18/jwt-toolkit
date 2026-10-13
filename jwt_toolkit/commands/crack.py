@@ -152,24 +152,25 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
 
     result, final_attempts, elapsed = _run_crack(
         wordlist,
-        encoding,
-        total_estimate,
-        threads,
-        alg,
-        decoded.header_b64,
-        decoded.payload_b64,
-        decoded.signature,
+        encoding=encoding,
+        total_estimate=total_estimate,
+        threads=threads,
+        alg=alg,
+        header_b64=decoded.header_b64,
+        payload_b64=decoded.payload_b64,
+        signature=decoded.signature,
     )
     avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
     if result is not None:
-        _render_found(result, alg, total_estimate, elapsed, avg_rate, output)
+        _render_found(result, alg, total_estimate, elapsed, avg_rate, output=output)
         raise SystemExit(1)
     _render_not_found(alg, final_attempts, elapsed, avg_rate)
 
 
 def _run_crack(  # noqa: PLR0915 — thread orchestration; splitting hurts readability
     wordlist_path: str,
+    *,
     encoding: str,
     total_estimate: int,
     threads: int,
@@ -276,6 +277,7 @@ def _render_found(
     total_estimate: int,
     elapsed: float,
     avg_rate: float,
+    *,
     output: str | None,
 ) -> None:
     label, idx = result
