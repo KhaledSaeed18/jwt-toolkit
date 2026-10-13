@@ -75,6 +75,7 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
 )
 def verify(
     token: str,
+    *,
     secret: str | None,
     public_key_path: Path | None,
     jwks_url: str | None,

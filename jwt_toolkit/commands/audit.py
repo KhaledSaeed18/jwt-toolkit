@@ -69,6 +69,7 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
 )
 def audit(
     token: str,
+    *,
     strict: bool,
     as_json: bool,
     secret: str | None,
@@ -97,9 +98,9 @@ def audit(
             decoded.payload,
             decoded.signature,
             report,
-            exit_code,
-            strict,
-            sig_result,
+            exit_code=exit_code,
+            strict=strict,
+            sig_result=sig_result,
         )
     else:
         _emit_rich(decoded.header, decoded.payload, decoded.signature, report, sig_result)
@@ -152,6 +153,7 @@ def _emit_json(
     payload: dict,
     signature: str,
     report: Report,
+    *,
     exit_code: int,
     strict: bool,
     sig_result: tuple[bool, str] | None,
