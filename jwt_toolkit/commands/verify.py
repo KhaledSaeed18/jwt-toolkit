@@ -212,10 +212,11 @@ def _check_temporal_claims(
     exp = payload.get("exp")
     if exp is None:
         rows.append(("WARN", "exp", "No expiry claim"))
-    elif not isinstance(exp, (int, float)):
+    elif not _is_numeric_date(exp):
         rows.append(("FAIL", "exp", f"exp is not a number: {exp!r}"))
         failed = True
-    elif exp + leeway < now:
+    elif now >= exp + leeway:
+        # RFC 7519 4.1.4: the current time MUST be before exp.
         rows.append(("FAIL", "exp", "Token is expired"))
         failed = True
     else:
@@ -223,7 +224,7 @@ def _check_temporal_claims(
 
     nbf = payload.get("nbf")
     if nbf is not None:
-        if not isinstance(nbf, (int, float)):
+        if not _is_numeric_date(nbf):
             rows.append(("FAIL", "nbf", f"nbf is not a number: {nbf!r}"))
             failed = True
         elif nbf > now + leeway:
@@ -232,12 +233,17 @@ def _check_temporal_claims(
 
     iat = payload.get("iat")
     if iat is not None:
-        if not isinstance(iat, (int, float)):
+        if not _is_numeric_date(iat):
             rows.append(("WARN", "iat", f"iat is not a number: {iat!r}"))
         elif iat > now + _IAT_FUTURE_LEEWAY_SECONDS + leeway:
             rows.append(("WARN", "iat", "iat is in the future — clock skew or forged token"))
 
     return failed
+
+
+def _is_numeric_date(value: object) -> bool:
+    # bool subclasses int in Python, but true/false is not a NumericDate.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _check_issuer(payload: dict, issuer: str, rows: list[tuple[str, str, str]]) -> bool:

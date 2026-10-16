@@ -356,3 +356,28 @@ def test_non_finite_exp_is_never_valid(runner, exp):
     result = invoke(runner, t, "--secret", "testsecret", "--json")
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "invalid_number"
+
+
+@pytest.mark.parametrize("claim", ["exp", "nbf"])
+@pytest.mark.parametrize("value", [True, False])
+def test_boolean_time_claim_fails(runner, claim, value):
+    t = make_token({"sub": "1", "exp": 9_999_999_999, claim: value})
+    result = invoke(runner, t, "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    check = next(c for c in json.loads(result.output)["checks"] if c["check"] == claim)
+    assert check["result"] == "FAIL"
+
+
+def test_token_is_expired_at_exactly_exp(runner, monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 1_700_000_000.0)
+    at_exp = make_token({"sub": "1", "exp": 1_700_000_000})
+    just_before = make_token({"sub": "1", "exp": 1_700_000_001})
+    assert invoke(runner, at_exp, "--secret", "testsecret").exit_code == 1
+    assert invoke(runner, just_before, "--secret", "testsecret").exit_code == 0
+
+
+def test_leeway_extends_exact_expiry_boundary(runner, monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 1_700_000_010.0)
+    t = make_token({"sub": "1", "exp": 1_700_000_000})
+    assert invoke(runner, t, "--secret", "testsecret", "--leeway", "10").exit_code == 1
+    assert invoke(runner, t, "--secret", "testsecret", "--leeway", "11").exit_code == 0
