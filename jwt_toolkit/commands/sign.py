@@ -35,7 +35,7 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
     "private_key_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
-    help="Path to a PEM-encoded private key (RS*/PS*/ES*). Mutually exclusive with --secret.",
+    help="Path to a PEM-encoded private key (RS*/PS*/ES*/Ed*). Mutually exclusive with --secret.",
 )
 @click.option(
     "--alg",
