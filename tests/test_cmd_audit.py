@@ -151,3 +151,13 @@ def test_audit_rejects_both_secret_and_public_key(runner, tmp_path, keypair_for,
     pub.write_bytes(kp.public_pem)
     result = invoke(runner, valid_token, "--secret", "x", "--public-key", str(pub))
     assert result.exit_code == 2
+
+
+def test_audit_conflicting_keys_is_json_under_json_flag(runner, tmp_path, keypair_for, valid_token):
+    pem = tmp_path / "key.pem"
+    pem.write_bytes(keypair_for("RS256").public_pem)
+    result = runner.invoke(
+        cli, ["audit", valid_token, "--secret", "s", "--public-key", str(pem), "--json"]
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "invalid_key_options"

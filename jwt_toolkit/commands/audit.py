@@ -7,7 +7,7 @@ from rich.table import Table
 
 from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
 from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
@@ -83,7 +83,12 @@ def audit(
     exit_code = _resolve_exit_code(report, strict=strict)
 
     if secret is not None and public_key_path is not None:
-        click.echo("Pass either --secret or --public-key, not both", err=True)
+        emit_error(
+            code="invalid_key_options",
+            title="Invalid Input",
+            headline="Pass either --secret or --public-key, not both",
+            as_json=as_json,
+        )
         raise SystemExit(2)
 
     sig_result: tuple[bool, str] | None = None
