@@ -1,3 +1,5 @@
+import ssl
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 from jwt_toolkit.cli import cli
@@ -87,3 +89,17 @@ def test_happy_path_reports_entry_count(runner, tmp_path):
             runner, "--output-dir", str(tmp_path), "--source", "https://example.com/wl.txt"
         )
     assert "3" in result.output  # 3 lines reported
+
+
+def test_tls_verification_failure_is_fatal_and_leaves_no_file(runner, tmp_path):
+    cert_error = urllib.error.URLError(ssl.SSLCertVerificationError("self-signed certificate"))
+    with patch(
+        "jwt_toolkit.commands.download_wordlists.urllib.request.urlopen",
+        side_effect=cert_error,
+    ) as urlopen:
+        result = invoke(runner, "--output-dir", str(tmp_path), "--source", "https://example.com/wl")
+    assert result.exit_code == 1
+    assert "certificate verification failed" in result.output
+    assert urlopen.call_count == 1
+    assert "context" not in urlopen.call_args.kwargs
+    assert not (tmp_path / "common-secrets.txt").exists()

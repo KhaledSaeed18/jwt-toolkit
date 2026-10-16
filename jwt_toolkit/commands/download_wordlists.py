@@ -32,17 +32,8 @@ _WORDLIST_SHA256 = "1b4bae820e98073b7148412425ea27e00cd1c4d0900ad446bdae146665ea
 
 
 def _open_url(url: str):
-    try:
-        return urllib.request.urlopen(url, timeout=30)
-    except ssl.SSLCertVerificationError:
-        console.print(
-            "[bold yellow]WARNING[/bold yellow]: TLS certificate verification failed for "
-            f"[dim]{url}[/dim]. Continuing with an unverified connection — "
-            "the download cannot be authenticated by TLS. "
-            "Check your CA bundle or use a trusted network.",
-        )
-        ctx = ssl._create_unverified_context()
-        return urllib.request.urlopen(url, context=ctx, timeout=30)
+    # Certificate failures must stay fatal: there is no unverified fallback.
+    return urllib.request.urlopen(url, timeout=30)
 
 
 def _download(url: str, dest: Path) -> int:
@@ -62,6 +53,11 @@ def _download(url: str, dest: Path) -> int:
         except urllib.error.HTTPError as exc:
             raise click.ClickException(f"HTTP {exc.code} {exc.reason}: {url}") from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ssl.SSLCertVerificationError):
+                raise click.ClickException(
+                    "TLS certificate verification failed, the download cannot be trusted. "
+                    "If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle."
+                ) from exc
             raise click.ClickException(f"Network error: {exc.reason}") from exc
 
         content_length = response.headers.get("Content-Length")
