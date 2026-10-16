@@ -14,7 +14,7 @@ from jwt_toolkit.core.crypto import (
 from jwt_toolkit.core.crypto import (
     sign_asymmetric as _sign_asymmetric,
 )
-from jwt_toolkit.core.encoding import base64url_encode
+from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_encode, strict_json_loads
 
 # Sign command — construct and mint a JWT from a header+payload and either an
 # HMAC secret or a PEM-encoded private key.
@@ -96,7 +96,14 @@ def sign(
 
 def _parse_json_arg(raw: str, *, label: str) -> dict:
     try:
-        value = json.loads(raw)
+        value = strict_json_loads(raw)
+    except NonFiniteNumberError as exc:
+        print_error(
+            f"Invalid {label} JSON",
+            "NaN, Infinity, and overflowing numbers are not valid JSON.",
+            title="Invalid Input",
+        )
+        raise SystemExit(2) from exc
     except json.JSONDecodeError as exc:
         print_error(
             f"Invalid {label} JSON",

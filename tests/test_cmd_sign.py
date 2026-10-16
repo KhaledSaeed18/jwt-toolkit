@@ -71,6 +71,13 @@ def test_sign_non_object_json_exits_2(runner, flag, value):
     assert "must be a JSON object" in result.output
 
 
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "1e400"])
+def test_sign_non_finite_number_exits_2(runner, number):
+    result = invoke(runner, "--payload", '{"exp":' + number + "}", "--secret", "s")
+    assert result.exit_code == 2
+    assert "not valid JSON" in result.output
+
+
 def test_sign_empty_secret_exits_2(runner):
     result = invoke(runner, "--payload", '{"sub":"1"}', "--secret", "")
     assert result.exit_code == 2
