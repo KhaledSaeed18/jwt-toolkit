@@ -2,7 +2,7 @@ import binascii
 import json
 from dataclasses import dataclass
 
-from jwt_toolkit.core.encoding import base64url_decode
+from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_decode, strict_json_loads
 from jwt_toolkit.core.errors import TokenDecodeError
 
 # Decoder module — splits a JWT and base64url-decodes its header and payload.
@@ -37,8 +37,8 @@ def decode_token(token: str) -> DecodedToken:
     # error type to catch — no more juggling binascii/json/ValueError everywhere.
     header_b64, payload_b64, signature = split_token(token)
     try:
-        header = json.loads(base64url_decode(header_b64))
-        payload = json.loads(base64url_decode(payload_b64))
+        header = strict_json_loads(base64url_decode(header_b64))
+        payload = strict_json_loads(base64url_decode(payload_b64))
     except (binascii.Error, UnicodeDecodeError) as exc:
         # binascii.Error: bad base64 bytes. UnicodeDecodeError: decoded bytes
         # are not valid UTF-8 and therefore cannot be JSON.
@@ -51,6 +51,16 @@ def decode_token(token: str) -> DecodedToken:
                 "The token may be truncated or corrupted",
             ),
         ) from exc
+    except NonFiniteNumberError as exc:
+        raise TokenDecodeError(
+            code="invalid_number",
+            title="Parse Error",
+            headline="Token contains a non-finite number (NaN or Infinity)",
+            details=(
+                "JSON does not allow NaN or Infinity, and numbers must not overflow",
+                "Time claims with such values cannot be checked",
+            ),
+        ) from exc
     except json.JSONDecodeError as exc:
         raise TokenDecodeError(
             code="invalid_json",
@@ -61,22 +71,32 @@ def decode_token(token: str) -> DecodedToken:
                 "The token structure may be corrupted",
             ),
         ) from exc
-    # RFC 7515/7519: the protected header and the claims set must be JSON objects.
-    for label, part in (("header", header), ("payload", payload)):
-        if not isinstance(part, dict):
-            raise TokenDecodeError(
-                code="invalid_json_object",
-                title="Parse Error",
-                headline=f"Token {label} is valid JSON but not a JSON object",
-                details=(
-                    f"Decoded {label} type : {type(part).__name__}",
-                    "A JWT header and payload must each be a JSON object",
-                ),
-            )
+    except ValueError as exc:
+        raise TokenDecodeError(
+            code="invalid_json",
+            title="Parse Error",
+            headline="Token decoded but header or payload is not valid JSON",
+            details=("A number in the token could not be parsed",),
+        ) from exc
     return DecodedToken(
-        header=header,
-        payload=payload,
+        header=_require_object("header", header),
+        payload=_require_object("payload", payload),
         signature=signature,
         header_b64=header_b64,
         payload_b64=payload_b64,
     )
+
+
+def _require_object(label: str, part: object) -> dict:
+    # RFC 7515/7519: the protected header and the claims set must be JSON objects.
+    if not isinstance(part, dict):
+        raise TokenDecodeError(
+            code="invalid_json_object",
+            title="Parse Error",
+            headline=f"Token {label} is valid JSON but not a JSON object",
+            details=(
+                f"Decoded {label} type : {type(part).__name__}",
+                "A JWT header and payload must each be a JSON object",
+            ),
+        )
+    return part

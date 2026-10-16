@@ -348,3 +348,11 @@ def test_jwks_url_unreachable_exits_2(runner, keypair_for):
     )
     result = invoke(runner, token, "--jwks-url", "file:///nonexistent/jwks.json")
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("exp", [float("nan"), float("inf")])
+def test_non_finite_exp_is_never_valid(runner, exp):
+    t = make_token({"sub": "1", "exp": exp})
+    result = invoke(runner, t, "--secret", "testsecret", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "invalid_number"
