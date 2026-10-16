@@ -1,4 +1,10 @@
+import hashlib
+import hmac
+
+import pytest
+
 from jwt_toolkit.cli import cli
+from jwt_toolkit.core.encoding import base64url_encode
 from tests.helpers import make_rs256_token, make_token, make_unsigned_token
 
 
@@ -47,12 +53,43 @@ def test_crack_empty_wordlist_exits_2(runner, tmp_path):
     assert "empty" in result.output.lower()
 
 
-def test_crack_comments_only_wordlist_exits_2(runner, tmp_path):
+def test_crack_blank_lines_only_wordlist_exits_2(runner, tmp_path):
     wl = tmp_path / "wl.txt"
-    wl.write_text("# comment\n# another comment\n")
+    wl.write_bytes(b"\n\r\n\n")
     t = make_token({"sub": "1"})
     result = invoke(runner, wl, t)
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [" leading-space", "trailing-space ", "tab\tinside", "trailing-tab\t", "#hash-prefixed", " "],
+)
+def test_crack_finds_secret_with_whitespace_or_hash(runner, tmp_path, secret):
+    wl = tmp_path / "wl.txt"
+    wl.write_bytes(b"alpha\n" + secret.encode() + b"\nomega\n")
+    t = make_token({"sub": "1"}, secret=secret)
+    result = invoke(runner, wl, t)
+    assert result.exit_code == 1
+
+
+def test_crack_handles_crlf_and_bom(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_bytes(b"\xef\xbb\xbffirst\r\nsecond\r\n")
+    for secret in ("first", "second"):
+        result = invoke(runner, wl, make_token({"sub": "1"}, secret=secret))
+        assert result.exit_code == 1, secret
+
+
+def test_crack_finds_non_utf8_secret(runner, tmp_path):
+    secret = "caf\xe9".encode("latin-1")
+    h = base64url_encode(b'{"alg":"HS256","typ":"JWT"}')
+    p = base64url_encode(b'{"sub":"1"}')
+    sig = base64url_encode(hmac.new(secret, f"{h}.{p}".encode(), hashlib.sha256).digest())
+    wl = tmp_path / "wl.txt"
+    wl.write_bytes(b"alpha\n" + secret + b"\n")
+    result = invoke(runner, wl, f"{h}.{p}.{sig}")
+    assert result.exit_code == 1
 
 
 # Algorithm rejection

@@ -35,50 +35,55 @@ _ENCODING_MULTIPLIER = {"utf-8": 1, "hex": 1, "base64": 1, "all": 3}
 _DEFAULT_THREADS = min(os.cpu_count() or 4, 8)
 
 
+def _wordlist_lines(wordlist_path: str):
+    # Yield each candidate line as raw bytes. Only the line terminator and a
+    # leading BOM are removed: spaces, tabs, and a leading "#" can all be part
+    # of a real secret. Lines are bytes so non-UTF-8 secrets are still tried.
+    with Path(wordlist_path).open("rb") as f:
+        for index, line in enumerate(f):
+            word = line.rstrip(b"\r\n")
+            if index == 0:
+                word = word.removeprefix(b"\xef\xbb\xbf")
+            if word:
+                yield word
+
+
 def _iter_candidates(wordlist_path: str, encoding: str):
     """Stream (label, secret_bytes) pairs from a wordlist file.
 
-    Handles P2 (no full-file load) and P3 (dedup by bytes) in one pass.
+    Dedup is per line only (across --encoding all expansions), so memory
+    stays flat however large the wordlist is.
     """
-    seen: set[bytes] = set()
-    with Path(wordlist_path).open(errors="ignore") as f:
-        for line in f:
-            word = line.strip()
-            if not word or word.startswith("#"):
-                continue
-            if encoding in ("utf-8", "all"):
-                sbytes = word.encode("utf-8", errors="replace")
+    for raw in _wordlist_lines(wordlist_path):
+        word = raw.decode("utf-8", errors="replace")
+        seen: set[bytes] = set()
+        if encoding in ("utf-8", "all"):
+            seen.add(raw)
+            yield word, raw
+        if encoding in ("hex", "all"):
+            try:
+                sbytes = bytes.fromhex(word)
+            except ValueError:
+                pass
+            else:
                 if sbytes not in seen:
                     seen.add(sbytes)
-                    yield word, sbytes
-            if encoding in ("hex", "all"):
-                try:
-                    sbytes = bytes.fromhex(word)
-                    if sbytes not in seen:
-                        seen.add(sbytes)
-                        yield f"{word} [hex]", sbytes
-                except ValueError:
-                    pass
-            if encoding in ("base64", "all"):
-                try:
-                    sbytes = base64_decode_padded(word)
-                    if sbytes not in seen:
-                        seen.add(sbytes)
-                        yield f"{word} [b64]", sbytes
-                # Invalid base64; skip and try next candidate.
-                except Exception:  # nosec B110
-                    pass
+                    yield f"{word} [hex]", sbytes
+        if encoding in ("base64", "all"):
+            try:
+                sbytes = base64_decode_padded(word)
+            # Invalid base64; skip and try next candidate.
+            except Exception:  # nosec B110
+                pass
+            else:
+                if sbytes not in seen:
+                    seen.add(sbytes)
+                    yield f"{word} [b64]", sbytes
 
 
 def _count_raw_lines(wordlist_path: str) -> int:
-    """Fast pre-scan: count valid (non-empty, non-comment) lines."""
-    count = 0
-    with Path(wordlist_path).open(errors="ignore") as f:
-        for line in f:
-            s = line.strip()
-            if s and not s.startswith("#"):
-                count += 1
-    return count
+    """Fast pre-scan: count candidate lines."""
+    return sum(1 for _ in _wordlist_lines(wordlist_path))
 
 
 def _format_rate(rate: float) -> str:
