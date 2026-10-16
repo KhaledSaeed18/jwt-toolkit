@@ -78,6 +78,13 @@ def decode_token(token: str) -> DecodedToken:
             headline="Token decoded but header or payload is not valid JSON",
             details=("A number in the token could not be parsed",),
         ) from exc
+    except RecursionError as exc:
+        raise TokenDecodeError(
+            code="invalid_json",
+            title="Parse Error",
+            headline="Token decoded but header or payload is not valid JSON",
+            details=("The JSON is nested too deeply to parse safely",),
+        ) from exc
     return DecodedToken(
         header=_require_object("header", header),
         payload=_require_object("payload", payload),

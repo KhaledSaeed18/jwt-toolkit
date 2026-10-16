@@ -94,3 +94,10 @@ def test_integer_past_digit_limit_raises_decode_error():
 def test_fractional_numeric_date_is_preserved():
     t = make_token({"exp": 1700000000.5})
     assert decode_token(t).payload["exp"] == 1700000000.5
+
+
+def test_deeply_nested_json_raises_decode_error():
+    deep = base64.urlsafe_b64encode(b"[" * 200_000).rstrip(b"=").decode()
+    with pytest.raises(TokenDecodeError) as exc:
+        decode_token(f"{deep}.{_b64('{}')}.sig")
+    assert exc.value.code == "invalid_json"
