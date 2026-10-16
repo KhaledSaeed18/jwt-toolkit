@@ -1,5 +1,6 @@
 import json
 
+import jwt_toolkit
 from jwt_toolkit.cli import cli
 from tests.helpers import make_token
 
@@ -67,3 +68,9 @@ def test_decode_malformed_token_exits_2(runner):
 def test_decode_one_part_exits_2(runner):
     result = invoke(runner, "onlyone")
     assert result.exit_code == 2
+
+
+def test_package_exposes_version_used_by_cli(runner):
+
+    result = runner.invoke(cli, ["--version"])
+    assert result.output.strip() == f"jwt-toolkit {jwt_toolkit.__version__}"
