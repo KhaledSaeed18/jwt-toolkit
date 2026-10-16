@@ -436,3 +436,33 @@ def test_non_string_alg_exits_2(runner, alg):
     result = invoke(runner, t, "--secret", "testsecret")
     assert result.exit_code == 2
     assert "Unsupported algorithm" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        ([], "invalid_key_options"),
+        (["--secret", "a", "--jwks-url", "file:///nonexistent"], "invalid_key_options"),
+    ],
+)
+def test_key_option_errors_are_json_under_json_flag(runner, valid_token, args, code):
+    result = invoke(runner, valid_token, *args, "--json")
+    assert result.exit_code == 2
+    data = json.loads(result.output)
+    assert data["error"] == code
+    assert data["schema_version"] == "0.1"
+
+
+def test_alg_none_is_json_under_json_flag(runner):
+    result = invoke(runner, make_unsigned_token({"sub": "1"}), "--secret", "x", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "unsupported_algorithm"
+
+
+def test_unparseable_public_key_is_json_under_json_flag(runner, tmp_path):
+    key = tmp_path / "bad.pem"
+    key.write_text("not a key")
+    t = make_rs256_token({"sub": "1"})
+    result = invoke(runner, t, "--public-key", str(key), "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "key_error"

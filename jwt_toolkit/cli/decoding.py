@@ -56,6 +56,15 @@ def safe_decode(
         raise SystemExit(2) from exc
 
 
+def emit_error(
+    *, code: str, title: str, headline: str, details: tuple[str, ...] = (), as_json: bool
+) -> None:
+    # Public entry for commands: a JSON envelope under --json, a panel otherwise.
+    _emit_error(
+        code=code, title=title, headline=headline, details=details, as_json=as_json, extra=None
+    )
+
+
 def render_algorithm_error(exc: UnsupportedAlgorithmError) -> None:
     print_error(exc.headline, *exc.details, title=exc.title)
 
