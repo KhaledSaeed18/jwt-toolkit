@@ -64,8 +64,9 @@ jwt-toolkit sign --payload '{"sub":"1"}' --secret mysecret
 # Generate defensive attack-shaped variants of a token (alg=none, alg confusion, etc.)
 jwt-toolkit forge <token> --public-key key.pub.pem
 
-# Brute-force a weak HMAC secret against a wordlist
-jwt-toolkit crack <token> wordlists/common-secrets.txt --workers 4
+# Brute-force a weak HMAC secret against the bundled wordlist, or your own
+jwt-toolkit crack <token>
+jwt-toolkit crack <token> rockyou.txt --workers 4
 
 # Generate a strong random secret
 jwt-toolkit generate-secret --bits 256 --encoding base64
@@ -219,7 +220,7 @@ Output:
 Input:
 
 ```bash
-jwt-toolkit crack <token> wordlists/common-secrets.txt --workers 4
+jwt-toolkit crack <token>
 ```
 
 Output:
