@@ -2,6 +2,7 @@ import hashlib
 import ssl
 import urllib.error
 import urllib.request
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
@@ -19,10 +20,21 @@ from rich.progress import (
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.panels import print_error, print_success
 
-# Download command — fetches the latest common-secrets wordlist from the jwt-toolkit repo.
+# Download command — fetches the common-secrets wordlist for this release from the jwt-toolkit repo.
 
+
+def _release_ref() -> str:
+    try:
+        return f"v{version('jwt-toolkit')}"
+    except PackageNotFoundError:
+        return "main"
+
+
+# Pinned to the release tag so the checksum below always matches the content;
+# a wordlist update on main must not break integrity checks in older releases.
 _WORDLIST_URL = (
-    "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main/wordlists/common-secrets.txt"
+    "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/"
+    f"{_release_ref()}/wordlists/common-secrets.txt"
 )
 _FILENAME = "common-secrets.txt"
 
@@ -109,9 +121,9 @@ def _fmt_bytes(n: int) -> str:
 @click.command(
     "download-wordlists",
     help=(
-        "Download the latest common-secrets wordlist.\n\n"
-        "Fetches common-secrets.txt from the jwt-toolkit repository "
-        "so you always have the most up-to-date list of weak JWT secrets."
+        "Download the common-secrets wordlist for this release.\n\n"
+        "Fetches common-secrets.txt from the jwt-toolkit repository at the tag "
+        "matching the installed version, and verifies its checksum."
     ),
 )
 @click.option(
@@ -159,7 +171,7 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
         size = dest.stat().st_size
         console.print(
             f"[yellow]Already exists:[/yellow] {dest} ({_fmt_bytes(size)})\n"
-            f"[dim]Use --force to overwrite with the latest version[/dim]"
+            f"[dim]Use --force to download it again[/dim]"
         )
         return
 

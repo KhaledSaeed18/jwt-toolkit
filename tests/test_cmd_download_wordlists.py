@@ -1,8 +1,10 @@
 import ssl
 import urllib.error
+from importlib.metadata import version
 from unittest.mock import MagicMock, patch
 
 from jwt_toolkit.cli import cli
+from jwt_toolkit.commands.download_wordlists import _WORDLIST_URL
 
 
 def _mock_response(content: bytes) -> MagicMock:
@@ -103,3 +105,8 @@ def test_tls_verification_failure_is_fatal_and_leaves_no_file(runner, tmp_path):
     assert urlopen.call_count == 1
     assert "context" not in urlopen.call_args.kwargs
     assert not (tmp_path / "common-secrets.txt").exists()
+
+
+def test_default_url_is_pinned_to_installed_release_tag():
+    assert f"/jwt-toolkit/v{version('jwt-toolkit')}/wordlists/" in _WORDLIST_URL
+    assert "/main/" not in _WORDLIST_URL

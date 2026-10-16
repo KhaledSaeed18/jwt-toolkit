@@ -36,7 +36,7 @@ Commands:
   forge               Emit defensive attack-shaped variants of a JWT for self-audit.
   crack               Brute-force a weak HMAC secret using a wordlist.
   generate-secret     Emit a cryptographically strong random secret.
-  download-wordlists  Fetch the latest common-secrets wordlist.
+  download-wordlists  Fetch the common-secrets wordlist for this release.
 
 \b
 Examples:
