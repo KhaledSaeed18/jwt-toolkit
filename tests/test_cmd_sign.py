@@ -48,6 +48,34 @@ def test_sign_custom_header_overrides_alg(runner):
     assert decoded.header["kid"] == "my-key"
 
 
+def test_sign_custom_header_without_alg_declares_signing_alg(runner):
+    result = invoke(
+        runner,
+        "--payload",
+        '{"sub":"1"}',
+        "--secret",
+        "s",
+        "--alg",
+        "HS384",
+        "--header",
+        '{"typ":"JWT","kid":"k1"}',
+    )
+    assert result.exit_code == 0
+    decoded = decode_token(result.output.strip())
+    assert decoded.header == {"alg": "HS384", "typ": "JWT", "kid": "k1"}
+    assert verify_signature(
+        decoded.header_b64, decoded.payload_b64, decoded.signature, "s", "HS384"
+    )
+
+
+def test_sign_custom_header_with_non_canonical_alg_exits_2(runner):
+    result = invoke(
+        runner, "--payload", '{"sub":"1"}', "--secret", "s", "--header", '{"alg":"hs256"}'
+    )
+    assert result.exit_code == 2
+    assert "case-sensitive" in result.output
+
+
 # Input validation
 
 

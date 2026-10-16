@@ -63,11 +63,17 @@ def sign(
         else _parse_json_arg(header_json, label="header")
     )
 
-    sign_alg = str(header.get("alg", alg)).upper()
-    if sign_alg not in ALL_SIGNING_ALGORITHMS:
+    if "alg" not in header:
+        # The emitted header must declare the algorithm actually used to sign.
+        header = {"alg": alg.upper(), **header}
+    sign_alg = header["alg"]
+    if not isinstance(sign_alg, str) or sign_alg not in ALL_SIGNING_ALGORITHMS:
+        details = [f"Supported: {', '.join(_ALG_CHOICES)}"]
+        if isinstance(sign_alg, str) and sign_alg.upper() in ALL_SIGNING_ALGORITHMS:
+            details.append(f"alg is case-sensitive; use {sign_alg.upper()!r} in --header")
         print_error(
             f"Unsupported algorithm: {sign_alg}",
-            f"Supported: {', '.join(_ALG_CHOICES)}",
+            *details,
             title="Algorithm Error",
         )
         raise SystemExit(2)
