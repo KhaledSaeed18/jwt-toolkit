@@ -279,3 +279,85 @@ def test_audit_verifies_eddsa_signature(runner, tmp_path, ed25519_keypair):
     ).output.strip()
     result = runner.invoke(cli, ["audit", token, "--public-key", str(pub), "--json"])
     assert json.loads(result.output)["signature_valid"] is True
+
+
+def _write_encrypted_key(tmp_path, private_pem: bytes, passphrase: bytes):
+    key = serialization.load_pem_private_key(private_pem, password=None)
+    path = tmp_path / "enc.pem"
+    path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.BestAvailableEncryption(passphrase),
+        )
+    )
+    return path
+
+
+def test_sign_with_passphrase_file(runner, tmp_path, keypair_for):
+    kp = keypair_for("ES256")
+    key = _write_encrypted_key(tmp_path, kp.private_pem, b"  spaced pass  ")
+    pw = tmp_path / "pw.txt"
+    pw.write_bytes(b"  spaced pass  \n")
+    result = invoke(
+        runner,
+        "--payload",
+        '{"sub":"1"}',
+        "--alg",
+        "ES256",
+        "--private-key",
+        str(key),
+        "--passphrase-file",
+        str(pw),
+    )
+    assert result.exit_code == 0
+    d = decode_token(result.output.strip())
+    assert verify_asymmetric(d.header_b64, d.payload_b64, d.signature, kp.public_pem, "ES256")
+
+
+def test_sign_encrypted_key_without_passphrase_fails_when_not_interactive(
+    runner, tmp_path, keypair_for
+):
+    key = _write_encrypted_key(tmp_path, keypair_for("ES256").private_pem, b"pw")
+    result = invoke(runner, "--payload", '{"sub":"1"}', "--alg", "ES256", "--private-key", str(key))
+    assert result.exit_code == 2
+    assert "--passphrase-file" in result.output
+
+
+def test_sign_encrypted_key_prompts_on_a_terminal(runner, tmp_path, keypair_for, monkeypatch):
+    key = _write_encrypted_key(tmp_path, keypair_for("ES256").private_pem, b"pw")
+    monkeypatch.setattr("jwt_toolkit.commands.sign._is_interactive", lambda: True)
+    args = ["sign", "--payload", '{"sub":"1"}', "--alg", "ES256", "--private-key", str(key)]
+    result = runner.invoke(cli, args, input="pw\n")
+    assert result.exit_code == 0
+    assert "Private key passphrase" in result.stderr
+    decode_token(result.stdout.strip())
+
+
+def test_sign_wrong_passphrase_exits_2_without_echo(runner, tmp_path, keypair_for):
+    key = _write_encrypted_key(tmp_path, keypair_for("ES256").private_pem, b"pw")
+    pw = tmp_path / "pw.txt"
+    pw.write_text("guess-9876\n")
+    result = invoke(
+        runner,
+        "--payload",
+        '{"sub":"1"}',
+        "--alg",
+        "ES256",
+        "--private-key",
+        str(key),
+        "--passphrase-file",
+        str(pw),
+    )
+    assert result.exit_code == 2
+    assert "wrong passphrase" in result.output
+    assert "guess-9876" not in result.output
+
+
+def test_sign_passphrase_file_without_private_key_exits_2(runner, tmp_path):
+    pw = tmp_path / "pw.txt"
+    pw.write_text("x\n")
+    result = invoke(
+        runner, "--payload", '{"sub":"1"}', "--secret", "s", "--passphrase-file", str(pw)
+    )
+    assert result.exit_code == 2
