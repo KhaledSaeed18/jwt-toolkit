@@ -1,8 +1,11 @@
+import datetime
 import json
 
 import pytest
-from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa, x25519
+from cryptography.x509.oid import NameOID
 
 from jwt_toolkit.core.crypto import (
     ASYMMETRIC_ALGORITHMS,
@@ -174,3 +177,39 @@ def test_x25519_key_is_not_a_signing_key():
     )
     with pytest.raises(ValueError, match="requires an"):
         verify_asymmetric("h", "p", "sig", pem, "EdDSA")
+
+
+def _self_signed_cert_pem(private_pem: bytes) -> bytes:
+    key = serialization.load_pem_private_key(private_pem, password=None)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "jwt-toolkit test")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+@pytest.mark.parametrize("alg", ["RS256", "PS256", "ES256", "ES384"])
+def test_verify_with_certificate_as_public_key(alg, keypair_for):
+    kp = keypair_for(alg)
+    h, p, sig = _parts({"sub": "1"}, alg, kp.private_pem)
+    assert verify_asymmetric(h, p, sig, _self_signed_cert_pem(kp.private_pem), alg) is True
+
+
+def test_certificate_with_wrong_key_type_is_rejected(keypair_for):
+    cert = _self_signed_cert_pem(keypair_for("ES256").private_pem)
+    with pytest.raises(ValueError, match="RS256 requires an RSA public key"):
+        verify_asymmetric("h", "p", "sig", cert, "RS256")
+
+
+def test_corrupt_certificate_is_rejected():
+    pem = b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+    with pytest.raises(ValueError, match="public key or certificate"):
+        verify_asymmetric("h", "p", "sig", pem, "RS256")

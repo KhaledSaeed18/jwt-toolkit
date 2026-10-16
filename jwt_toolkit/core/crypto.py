@@ -2,9 +2,11 @@ import hashlib
 import hmac
 from collections.abc import Callable
 
+from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
@@ -174,10 +176,16 @@ def _load_private_key(pem: bytes, alg: str):
 
 
 def _load_public_key(pem: bytes, alg: str):
+    key: PublicKeyTypes
     try:
-        key = serialization.load_pem_public_key(pem)
+        if b"-----BEGIN CERTIFICATE-----" in pem:
+            # Identity providers often publish signing keys as certificates. The
+            # certificate is only a key container here: no chain or validity check.
+            key = x509.load_pem_x509_certificate(pem).public_key()
+        else:
+            key = serialization.load_pem_public_key(pem)
     except (ValueError, TypeError) as exc:
-        raise ValueError(f"Could not parse PEM public key: {exc}") from exc
+        raise ValueError(f"Could not parse PEM public key or certificate: {exc}") from exc
     _ensure_key_matches_alg(key, alg, is_private=False)
     return key
 
