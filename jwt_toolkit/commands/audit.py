@@ -76,7 +76,7 @@ def audit(
     public_key_path: Path | None,
     required_claims: str,
 ):
-    token = resolve_token(token)
+    token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
     required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
     report = run_audit(decoded.header, decoded.payload, required_claims=required)

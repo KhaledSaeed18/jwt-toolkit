@@ -84,7 +84,7 @@ def verify(
     leeway: int,
     as_json: bool,
 ):
-    token = resolve_token(token)
+    token = resolve_token(token, as_json=as_json)
 
     decoded = safe_decode(token, as_json=as_json)
     try:

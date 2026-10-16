@@ -59,7 +59,7 @@ _INTRO = (
     help="Emit a machine-readable JSON document instead of the rich table.",
 )
 def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: bool):
-    token = resolve_token(token)
+    token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
 
     pem: bytes | None = public_key_path.read_bytes() if public_key_path is not None else None
