@@ -181,3 +181,20 @@ def test_crack_output_write_failure_shows_inline_note(runner, tmp_path):
     result = invoke(runner, wl, t, "--output", bad_output)
     assert result.exit_code == 1
     assert "Could not save" in result.output or "save" in result.output.lower()
+
+
+def test_crack_workers_alias_matches_threads(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("alpha\ntestsecret\n")
+    t = make_token({"sub": "1"})
+    result = runner.invoke(cli, ["crack", t, str(wl), "--workers", "2"])
+    assert result.exit_code == 1
+
+
+def test_crack_invalid_base64_signature_exits_2(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("alpha\n")
+    h, p, _ = make_token({"sub": "1"}).split(".")
+    result = invoke(runner, wl, f"{h}.{p}.@@@not-base64@@@")
+    assert result.exit_code == 2
+    assert "not valid base64url" in result.output

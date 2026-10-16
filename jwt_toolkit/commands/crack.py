@@ -1,6 +1,5 @@
-import hmac as _hmac
+import binascii
 import os
-import threading
 import time
 from pathlib import Path
 
@@ -19,20 +18,17 @@ from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import render_algorithm_error, resolve_token, safe_decode
 from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.core.cracker import MIN_PARALLEL_CANDIDATES, find_secret
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
-from jwt_toolkit.core.encoding import base64_decode_padded, base64url_encode
+from jwt_toolkit.core.encoding import base64_decode_padded, base64url_decode
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Crack command — brute-forces a weak HMAC JWT secret against a wordlist.
 
-# Items pulled from the generator per lock acquisition — reduces contention
-# on the hot loop without buffering the whole file in memory.
-_BATCH_SIZE = 200
-
 # Expansion factor used to estimate total candidates before streaming starts.
 _ENCODING_MULTIPLIER = {"utf-8": 1, "hex": 1, "base64": 1, "all": 3}
 
-_DEFAULT_THREADS = min(os.cpu_count() or 4, 8)
+_DEFAULT_WORKERS = min(os.cpu_count() or 4, 8)
 
 
 def _wordlist_lines(wordlist_path: str):
@@ -98,11 +94,13 @@ def _format_rate(rate: float) -> str:
 @click.argument("token")
 @click.argument("wordlist", type=click.Path(exists=True, readable=True))
 @click.option(
+    "--workers",
     "--threads",
-    default=_DEFAULT_THREADS,
+    "threads",
+    default=_DEFAULT_WORKERS,
     show_default=True,
     type=click.IntRange(1, 64),
-    help="Worker threads (1-64)",
+    help="Parallel worker processes (1-64); small wordlists run in one process",
 )
 @click.option(
     "--encoding",
@@ -146,12 +144,22 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         raise SystemExit(2)
 
     total_estimate = raw_count * _ENCODING_MULTIPLIER.get(encoding, 1)
+    workers = threads if total_estimate >= MIN_PARALLEL_CANDIDATES else 1
+
+    try:
+        signature = base64url_decode(decoded.signature)
+    except binascii.Error as exc:
+        print_error(
+            "Token signature is not valid base64url — nothing to crack",
+            title="Cannot Crack",
+        )
+        raise SystemExit(2) from exc
 
     if not os.environ.get("JWT_TOOLKIT_QUIET"):
         console.print(
             f"[dim]Algorithm : {alg}   "
             f"Candidates : ~{total_estimate:,}   "
-            f"Threads : {threads}   "
+            f"Workers : {workers}   "
             f"Encoding : {encoding}[/dim]"
         )
 
@@ -159,11 +167,11 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
         wordlist,
         encoding=encoding,
         total_estimate=total_estimate,
-        threads=threads,
+        workers=workers,
         alg=alg,
         header_b64=decoded.header_b64,
         payload_b64=decoded.payload_b64,
-        signature=decoded.signature,
+        signature=signature,
     )
     avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
@@ -173,65 +181,18 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
     _render_not_found(alg, final_attempts, elapsed, avg_rate)
 
 
-def _run_crack(  # noqa: PLR0915 — thread orchestration; splitting hurts readability
+def _run_crack(
     wordlist_path: str,
     *,
     encoding: str,
     total_estimate: int,
-    threads: int,
+    workers: int,
     alg: str,
     header_b64: str,
     payload_b64: str,
-    signature: str,
+    signature: bytes,
 ) -> tuple[tuple[str, int] | None, int, float]:
-    digestmod = SUPPORTED_ALGORITHMS[alg]
-    signing_input = f"{header_b64}.{payload_b64}".encode()
-
-    def _check(sbytes: bytes) -> bool:
-        digest = _hmac.new(sbytes, signing_input, digestmod).digest()
-        # compare_digest avoids leaking signature length via short-circuit.
-        return _hmac.compare_digest(base64url_encode(digest), signature)
-
-    gen = _iter_candidates(wordlist_path, encoding)
-    gen_lock = threading.Lock()
-    position_counter: list[int] = [0]
-    stop_event = threading.Event()
-    lock = threading.Lock()
-    found_box: list[tuple[str, int] | None] = [None]
-    attempts_box: list[int] = [0]
-
-    def worker() -> None:
-        local_attempts = 0
-        while not stop_event.is_set():
-            # Pull a batch under a single lock acquisition to keep contention low.
-            with gen_lock:
-                batch: list[tuple[int, tuple[str, bytes]]] = []
-                for _ in range(_BATCH_SIZE):
-                    item = next(gen, None)
-                    if item is None:
-                        break
-                    pos = position_counter[0]
-                    position_counter[0] += 1
-                    batch.append((pos, item))
-            if not batch:
-                break
-            for pos, (label, sbytes) in batch:
-                if stop_event.is_set():
-                    break
-                if _check(sbytes):
-                    with lock:
-                        found_box[0] = (label, pos)
-                    stop_event.set()
-                    break
-                local_attempts += 1
-                if local_attempts % 500 == 0:
-                    with lock:
-                        attempts_box[0] += local_attempts
-                    local_attempts = 0
-        with lock:
-            attempts_box[0] += local_attempts
-
-    thread_list = [threading.Thread(target=worker, daemon=True) for _ in range(threads)]
+    digest = SUPPORTED_ALGORITHMS[alg]().name
     start = time.perf_counter()
 
     with Progress(
@@ -246,34 +207,25 @@ def _run_crack(  # noqa: PLR0915 — thread orchestration; splitting hurts reada
     ) as progress:
         task = progress.add_task("Cracking…", total=total_estimate, rate="-")
 
-        for t in thread_list:
-            t.start()
+        def on_progress(done: int) -> None:
+            elapsed = time.perf_counter() - start
+            rate = _format_rate(done / elapsed) if elapsed > 0 else "-"
+            progress.update(task, completed=done, rate=rate)
 
-        prev_attempts = 0
-        prev_time = start
-
-        # Poll workers every 150ms; refresh rate display every 400ms.
-        while not stop_event.is_set() and any(t.is_alive() for t in thread_list):
-            time.sleep(0.15)
-            with lock:
-                done = attempts_box[0]
-
-            now = time.perf_counter()
-            dt = now - prev_time
-            if dt >= 0.4:
-                rate = (done - prev_attempts) / dt
-                progress.update(task, completed=done, rate=_format_rate(rate))
-                prev_attempts = done
-                prev_time = now
-            else:
-                progress.update(task, completed=done)
-
-        for t in thread_list:
-            t.join()
+        result = find_secret(
+            _iter_candidates(wordlist_path, encoding),
+            signing_input=f"{header_b64}.{payload_b64}".encode(),
+            signature=signature,
+            digest=digest,
+            workers=workers,
+            parallel=total_estimate >= MIN_PARALLEL_CANDIDATES,
+            on_progress=on_progress,
+        )
 
     elapsed = time.perf_counter() - start
-    with lock:
-        return found_box[0], attempts_box[0], elapsed
+    if result.label is None or result.position is None:
+        return None, result.attempts, elapsed
+    return (result.label, result.position), result.attempts, elapsed
 
 
 def _render_found(
