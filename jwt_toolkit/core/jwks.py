@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 
 from jwt_toolkit.core.crypto import canonical_algorithm
 from jwt_toolkit.core.encoding import base64url_decode
@@ -29,9 +29,20 @@ _KTY_BY_ALG = {
     "ES256": "EC",
     "ES384": "EC",
     "ES512": "EC",
+    "EdDSA": "OKP",
+    "Ed25519": "OKP",
+    "Ed448": "OKP",
 }
 
 # JWS ES* alg → expected JWK `crv` parameter per RFC 7518 §6.2.1.1.
+# RFC 8037 2: OKP signing curves. X25519/X448 are key-agreement curves and
+# must never verify a signature.
+_OKP_CRVS_BY_ALG: dict[str, frozenset[str]] = {
+    "EdDSA": frozenset({"Ed25519", "Ed448"}),
+    "Ed25519": frozenset({"Ed25519"}),
+    "Ed448": frozenset({"Ed448"}),
+}
+
 _CRV_BY_ALG = {
     "ES256": "P-256",
     "ES384": "P-384",
@@ -96,11 +107,18 @@ def jwk_to_public_pem(jwk: dict, alg: str) -> bytes:
     # ValueError before any crypto operation runs.
     _ensure_jwk_matches_alg(jwk, alg)
     kty = jwk.get("kty")
-    public_key: rsa.RSAPublicKey | ec.EllipticCurvePublicKey
+    public_key: (
+        rsa.RSAPublicKey
+        | ec.EllipticCurvePublicKey
+        | ed25519.Ed25519PublicKey
+        | ed448.Ed448PublicKey
+    )
     if kty == "RSA":
         public_key = _rsa_public_key_from_jwk(jwk)
     elif kty == "EC":
         public_key = _ec_public_key_from_jwk(jwk, alg)
+    elif kty == "OKP":
+        public_key = _okp_public_key_from_jwk(jwk)
     else:
         # Defensive — _ensure_jwk_matches_alg already rejects unsupported algs,
         # but we may be called directly via a kty that has no JWS counterpart.
@@ -155,6 +173,14 @@ def _ensure_jwk_matches_alg(jwk: dict, alg: str) -> None:
         raise ValueError(f"JWK alg={jwk_alg!r} does not match token alg={alg}")
 
     # For EC keys, the curve in the JWK must match the curve required by the alg.
+    if expected_kty == "OKP":
+        allowed = _OKP_CRVS_BY_ALG[alg]
+        actual_crv = jwk.get("crv")
+        if actual_crv not in allowed:
+            raise ValueError(
+                f"JWK crv={actual_crv!r} does not match alg={alg} (expected {' or '.join(sorted(allowed))})"
+            )
+
     if expected_kty == "EC":
         expected_crv = _CRV_BY_ALG[alg]
         actual_crv = jwk.get("crv")
@@ -190,6 +216,18 @@ def _ec_public_key_from_jwk(jwk: dict, alg: str) -> ec.EllipticCurvePublicKey:
     # Curve already validated against alg by _ensure_jwk_matches_alg.
     del alg
     return ec.EllipticCurvePublicNumbers(x=x, y=y, curve=curve_cls()).public_key()
+
+
+def _okp_public_key_from_jwk(jwk: dict) -> ed25519.Ed25519PublicKey | ed448.Ed448PublicKey:
+    x = jwk.get("x")
+    if not isinstance(x, str):
+        raise ValueError("OKP JWK is missing required field: 'x'")
+    raw = base64url_decode(x)
+    key_cls = ed25519.Ed25519PublicKey if jwk.get("crv") == "Ed25519" else ed448.Ed448PublicKey
+    try:
+        return key_cls.from_public_bytes(raw)
+    except ValueError as exc:
+        raise ValueError(f"OKP JWK has a malformed 'x' value: {exc}") from exc
 
 
 def _b64url_to_int(value: str) -> int:
