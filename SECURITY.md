@@ -4,12 +4,12 @@
 
 ## Supported versions
 
-`jwt-toolkit` follows semantic versioning and is pre-1.0 (`0.x.y`). Only the latest published minor on PyPI receives security fixes.
+`jwt-toolkit` follows semantic versioning. Only the latest published `1.x` minor on PyPI receives security fixes.
 
-| Version                | Supported                                  |
-| ---------------------- | ------------------------------------------ |
-| Latest `0.x.y` on PyPI | Yes — fixes ship in the next patch release |
-| Older `0.x.y` lines    | No — please upgrade                        |
+| Version                     | Supported                                  |
+| --------------------------- | ------------------------------------------ |
+| Latest `1.x.y` on PyPI      | Yes — fixes ship in the next patch release |
+| Older `1.x` minors, `0.x.y` | No — please upgrade                        |
 
 You can confirm the latest version with `pip index versions jwt-toolkit` or by visiting <https://pypi.org/project/jwt-toolkit/>.
 
