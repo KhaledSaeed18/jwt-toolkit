@@ -23,3 +23,14 @@ class UnsupportedAlgorithmError(Exception):
 
     def __str__(self) -> str:
         return self.headline
+
+
+@dataclass(frozen=True)
+class KeyPassphraseRequiredError(ValueError):
+    # Raised when a PEM private key is encrypted and no passphrase was given.
+    # A ValueError so existing "key could not be used" handlers still catch it.
+    headline: str = "The private key is encrypted and needs a passphrase"
+    code: str = "key_passphrase_required"
+
+    def __str__(self) -> str:
+        return self.headline

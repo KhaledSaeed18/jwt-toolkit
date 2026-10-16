@@ -14,6 +14,7 @@ from jwt_toolkit.core.crypto import (
     verify_asymmetric,
 )
 from jwt_toolkit.core.encoding import base64url_decode, base64url_encode
+from jwt_toolkit.core.errors import KeyPassphraseRequiredError
 from tests.helpers import self_signed_cert_pem
 
 
@@ -194,3 +195,44 @@ def test_corrupt_certificate_is_rejected():
     pem = b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
     with pytest.raises(ValueError, match="public key or certificate"):
         verify_asymmetric("h", "p", "sig", pem, "RS256")
+
+
+_PASSPHRASE = b"correct horse battery staple"
+
+
+def _encrypted_pem(private_pem: bytes, fmt: serialization.PrivateFormat) -> bytes:
+    key = serialization.load_pem_private_key(private_pem, password=None)
+    return key.private_bytes(
+        serialization.Encoding.PEM, fmt, serialization.BestAvailableEncryption(_PASSPHRASE)
+    )
+
+
+@pytest.mark.parametrize(
+    "fmt", [serialization.PrivateFormat.PKCS8, serialization.PrivateFormat.TraditionalOpenSSL]
+)
+@pytest.mark.parametrize("alg", ["RS256", "ES256"])
+def test_sign_with_encrypted_private_key(alg, fmt, keypair_for):
+    kp = keypair_for(alg)
+    sig = sign_asymmetric(
+        "h", "p", _encrypted_pem(kp.private_pem, fmt), alg, passphrase=_PASSPHRASE
+    )
+    assert verify_asymmetric("h", "p", sig, kp.public_pem, alg) is True
+
+
+def test_encrypted_key_without_passphrase_raises_typed_error(keypair_for):
+    pem = _encrypted_pem(keypair_for("ES256").private_pem, serialization.PrivateFormat.PKCS8)
+    with pytest.raises(KeyPassphraseRequiredError) as exc:
+        sign_asymmetric("h", "p", pem, "ES256")
+    assert exc.value.code == "key_passphrase_required"
+
+
+def test_wrong_passphrase_is_reported_without_echoing_it(keypair_for):
+    pem = _encrypted_pem(keypair_for("ES256").private_pem, serialization.PrivateFormat.PKCS8)
+    with pytest.raises(ValueError, match="wrong passphrase") as exc:
+        sign_asymmetric("h", "p", pem, "ES256", passphrase=b"guess-1234")
+    assert "guess-1234" not in str(exc.value)
+
+
+def test_passphrase_for_unencrypted_key_is_rejected(keypair_for):
+    with pytest.raises(ValueError, match="not encrypted"):
+        sign_asymmetric("h", "p", keypair_for("ES256").private_pem, "ES256", passphrase=b"x")

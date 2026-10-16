@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 )
 
 from jwt_toolkit.core.encoding import base64url_decode, base64url_encode
+from jwt_toolkit.core.errors import KeyPassphraseRequiredError
 
 # Crypto module — signing and verification for the JWS algorithms we support.
 # HMAC lives at the top of the module; asymmetric primitives follow.
@@ -123,14 +124,21 @@ def verify_signature(
 # uniformly without catching library-specific exception classes.
 
 
-def sign_asymmetric(header_b64: str, payload_b64: str, private_key_pem: bytes, alg: str) -> str:
+def sign_asymmetric(
+    header_b64: str,
+    payload_b64: str,
+    private_key_pem: bytes,
+    alg: str,
+    *,
+    passphrase: bytes | None = None,
+) -> str:
     alg = canonical_algorithm(alg) or alg
     if alg not in ASYMMETRIC_ALGORITHMS:
         raise ValueError(
             f"Unsupported algorithm: {alg}. "
             f"Asymmetric algorithms: {', '.join(sorted(ASYMMETRIC_ALGORITHMS))}"
         )
-    private_key = _load_private_key(private_key_pem, alg)
+    private_key = _load_private_key(private_key_pem, alg, passphrase=passphrase)
     message = f"{header_b64}.{payload_b64}".encode()
     raw_sig = _sign_with_private_key(private_key, message, alg)
     return base64url_encode(raw_sig)
@@ -166,10 +174,17 @@ def verify_asymmetric(
 # breaking importers.
 
 
-def _load_private_key(pem: bytes, alg: str):
+def _load_private_key(pem: bytes, alg: str, *, passphrase: bytes | None = None):
     try:
-        key = serialization.load_pem_private_key(pem, password=None)
-    except (ValueError, TypeError) as exc:
+        key = serialization.load_pem_private_key(pem, password=passphrase)
+    except TypeError as exc:
+        # cryptography signals passphrase/encryption mismatches with TypeError.
+        if passphrase is None:
+            raise KeyPassphraseRequiredError() from exc
+        raise ValueError("A passphrase was given but the private key is not encrypted") from exc
+    except ValueError as exc:
+        if passphrase is not None and b"ENCRYPTED" in pem:
+            raise ValueError("Could not decrypt the private key: wrong passphrase") from exc
         raise ValueError(f"Could not parse PEM private key: {exc}") from exc
     _ensure_key_matches_alg(key, alg, is_private=True)
     return key
