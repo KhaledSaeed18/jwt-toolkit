@@ -197,3 +197,13 @@ def test_hs_rs_confusion_variant_is_decodable(rsa_keypair):
     v = forge_one("hs_rs_confusion", decoded, public_key_pem=rsa_keypair.public_pem)
     re_decoded = decode_token(v.token)
     assert re_decoded.header["alg"] == "HS256"
+
+
+_HEADER_ONLY = {"kid_path_traversal", "kid_sql_injection", "jku_attacker", "jwk_embedded"}
+
+
+@pytest.mark.parametrize("name", STATIC_VARIANT_NAMES)
+def test_header_only_variants_are_labelled(name, valid_token):
+    variant = forge_one(name, decode_token(valid_token))
+    assert variant.header_only is (name in _HEADER_ONLY)
+    assert ("does not rule out the flaw" in variant.description) is (name in _HEADER_ONLY)
