@@ -395,3 +395,11 @@ def test_b64_non_boolean_is_warn():
     findings = _audit_b64({"alg": "RS256", "b64": "false"})
     assert findings[0].severity is Severity.WARN
     assert "str" in findings[0].message
+
+
+@pytest.mark.parametrize("claim", ["exp", "nbf", "iat"])
+def test_boolean_time_claim_is_flagged_not_numeric(claim):
+    payload = {"exp": int(time.time()) + 600, claim: True}
+    f = _find(run_audit({"alg": "RS256", "typ": "JWT"}, payload).findings, claim)
+    assert f.severity is Severity.WARN
+    assert "not numeric" in f.message

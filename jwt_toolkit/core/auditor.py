@@ -422,15 +422,15 @@ def _audit_expiry(payload: dict) -> list[Finding]:
                 "Always set exp; short-lived tokens limit blast radius if leaked.",
             )
         ]
-    if not isinstance(exp, (int, float)):
+    if not _is_numeric_date(exp):
         return [Finding(Severity.WARN, "exp", f"exp is not numeric ({type(exp).__name__})")]
 
     now = time.time()
-    if exp < now:
+    if exp <= now:
         return [Finding(Severity.CRITICAL, "exp", "Token is expired")]
 
     # Lifetime measured from iat when available, otherwise from now.
-    lifetime = exp - (iat if isinstance(iat, (int, float)) else now)
+    lifetime = exp - (iat if _is_numeric_date(iat) else now)
     for threshold, suffix in _LIFETIME_TIERS:
         if lifetime > threshold:
             severity = (
@@ -455,7 +455,7 @@ def _audit_nbf(payload: dict) -> list[Finding]:
     nbf = payload.get("nbf")
     if nbf is None:
         return []
-    if not isinstance(nbf, (int, float)):
+    if not _is_numeric_date(nbf):
         return [Finding(Severity.WARN, "nbf", f"nbf is not numeric ({type(nbf).__name__})")]
     if time.time() < nbf:
         return [Finding(Severity.CRITICAL, "nbf", "Token is not yet valid (nbf is in the future)")]
@@ -466,10 +466,10 @@ def _audit_iat(payload: dict) -> list[Finding]:
     iat = payload.get("iat")
     if iat is None:
         return []
-    if not isinstance(iat, (int, float)):
+    if not _is_numeric_date(iat):
         return [Finding(Severity.WARN, "iat", f"iat is not numeric ({type(iat).__name__})")]
     exp = payload.get("exp")
-    if isinstance(exp, (int, float)) and exp < iat:
+    if _is_numeric_date(exp) and exp < iat:
         return [
             Finding(
                 Severity.CRITICAL,
@@ -486,6 +486,11 @@ def _audit_iat(payload: dict) -> list[Finding]:
             )
         ]
     return [Finding(Severity.PASS, "iat", "iat looks sane")]
+
+
+def _is_numeric_date(value: object) -> bool:
+    # bool subclasses int in Python, but true/false is not a NumericDate.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _audit_jti(payload: dict) -> list[Finding]:
