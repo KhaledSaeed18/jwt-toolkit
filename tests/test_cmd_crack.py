@@ -198,3 +198,17 @@ def test_crack_invalid_base64_signature_exits_2(runner, tmp_path):
     result = invoke(runner, wl, f"{h}.{p}.@@@not-base64@@@")
     assert result.exit_code == 2
     assert "not valid base64url" in result.output
+
+
+def test_crack_without_wordlist_uses_bundled_list(runner):
+    t = make_token({"sub": "1"}, secret="password")
+    result = runner.invoke(cli, ["crack", t, "--workers", "1"])
+    assert result.exit_code == 1
+    assert "bundled common-secrets.txt" in result.output
+
+
+def test_crack_without_wordlist_and_no_bundled_list_exits_2(runner, monkeypatch):
+    monkeypatch.setattr("jwt_toolkit.commands.crack._bundled_wordlist", lambda: None)
+    result = runner.invoke(cli, ["crack", make_token({"sub": "1"})])
+    assert result.exit_code == 2
+    assert "download-wordlists" in result.output
