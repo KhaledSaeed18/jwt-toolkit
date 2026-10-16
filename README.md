@@ -65,7 +65,7 @@ jwt-toolkit sign --payload '{"sub":"1"}' --secret mysecret
 jwt-toolkit forge <token> --public-key key.pub.pem
 
 # Brute-force a weak HMAC secret against a wordlist
-jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8
+jwt-toolkit crack <token> wordlists/common-secrets.txt --workers 4
 
 # Generate a strong random secret
 jwt-toolkit generate-secret --bits 256 --encoding base64
@@ -219,7 +219,7 @@ Output:
 Input:
 
 ```bash
-jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8
+jwt-toolkit crack <token> wordlists/common-secrets.txt --workers 4
 ```
 
 Output:

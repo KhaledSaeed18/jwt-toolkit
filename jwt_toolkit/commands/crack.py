@@ -28,7 +28,8 @@ from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 # Expansion factor used to estimate total candidates before streaming starts.
 _ENCODING_MULTIPLIER = {"utf-8": 1, "hex": 1, "base64": 1, "all": 3}
 
-_DEFAULT_WORKERS = min(os.cpu_count() or 4, 8)
+# Measured: beyond ~4 workers the single reader process is the bottleneck.
+_DEFAULT_WORKERS = min(os.cpu_count() or 1, 4)
 
 
 def _wordlist_lines(wordlist_path: str):
