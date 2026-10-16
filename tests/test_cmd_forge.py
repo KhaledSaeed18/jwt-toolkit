@@ -110,3 +110,10 @@ def test_every_registered_variant_is_reachable_via_mode(runner, tmp_path, keypai
         assert result.exit_code == 0, f"forge --mode {name} failed: {result.output}"
         data = json.loads(result.output)
         assert data["variants"][0]["name"] == name
+
+
+def test_json_marks_header_only_variants(runner, valid_token):
+    result = runner.invoke(cli, ["forge", valid_token, "--json"])
+    variants = {v["name"]: v for v in json.loads(result.output)["variants"]}
+    assert variants["jwk_embedded"]["header_only"] is True
+    assert variants["alg_none_lower"]["header_only"] is False
