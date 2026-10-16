@@ -381,3 +381,42 @@ def test_leeway_extends_exact_expiry_boundary(runner, monkeypatch):
     t = make_token({"sub": "1", "exp": 1_700_000_000})
     assert invoke(runner, t, "--secret", "testsecret", "--leeway", "10").exit_code == 1
     assert invoke(runner, t, "--secret", "testsecret", "--leeway", "11").exit_code == 0
+
+
+def _crit_token(extra_header: dict) -> str:
+    return make_token(
+        {"sub": "1", "exp": 9_999_999_999},
+        header_override={"alg": "HS256", "typ": "JWT", **extra_header},
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"crit": ["custom"], "custom": True},
+        {"crit": ["exp"], "exp": 1},
+        {"crit": "custom", "custom": True},
+        {"crit": []},
+        {"crit": ["custom", "custom"], "custom": True},
+        {"crit": [1]},
+        {"crit": ["missing"]},
+    ],
+)
+def test_crit_header_is_rejected(runner, extra):
+    result = invoke(runner, _crit_token(extra), "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data["valid"] is False
+    assert any(c["check"] == "crit" and c["result"] == "FAIL" for c in data["checks"])
+
+
+@pytest.mark.parametrize("b64", [False, "false", None])
+def test_unencoded_payload_header_is_rejected(runner, b64):
+    result = invoke(runner, _crit_token({"b64": b64}), "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    assert any(c["check"] == "b64" for c in json.loads(result.output)["checks"])
+
+
+def test_b64_true_is_accepted(runner):
+    result = invoke(runner, _crit_token({"b64": True}), "--secret", "testsecret")
+    assert result.exit_code == 0

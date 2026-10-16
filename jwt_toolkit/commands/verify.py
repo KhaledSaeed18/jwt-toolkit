@@ -120,6 +120,7 @@ def verify(
         rows.append(("FAIL", "signature", "Signature is invalid, wrong key or tampered token"))
         failed = True
 
+    failed |= _check_critical_headers(decoded.header, rows)
     failed |= _check_temporal_claims(decoded.payload, rows, leeway=leeway)
     if issuer is not None:
         failed |= _check_issuer(decoded.payload, issuer, rows)
@@ -201,6 +202,31 @@ def _verify_signature(
     return verify_asymmetric(
         decoded.header_b64, decoded.payload_b64, decoded.signature, pem_bytes, alg
     )
+
+
+def _check_critical_headers(header: dict, rows: list[tuple[str, str, str]]) -> bool:
+    # RFC 7515 4.1.11: a recipient that does not implement every extension
+    # listed in crit MUST reject the token. This verifier implements none.
+    failed = False
+    if "crit" in header:
+        crit = header["crit"]
+        if (
+            not isinstance(crit, list)
+            or not crit
+            or not all(isinstance(name, str) for name in crit)
+            or len(set(crit)) != len(crit)
+        ):
+            rows.append(("FAIL", "crit", "crit header is malformed, token cannot be trusted"))
+        else:
+            rows.append(
+                ("FAIL", "crit", f"Token requires unsupported header extensions: {sorted(crit)}")
+            )
+        failed = True
+    # RFC 7797 unencoded payloads change the signing input; they are not supported.
+    if "b64" in header and header["b64"] is not True:
+        rows.append(("FAIL", "b64", "Unencoded payload (b64) is not supported, token rejected"))
+        failed = True
+    return failed
 
 
 def _check_temporal_claims(
