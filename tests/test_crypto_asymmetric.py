@@ -2,11 +2,12 @@ import json
 
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa, x25519
 
 from jwt_toolkit.core.crypto import (
     ASYMMETRIC_ALGORITHMS,
     EC_ALGORITHMS,
+    OKP_ALGORITHMS,
     PSS_ALGORITHMS,
     RSA_ALGORITHMS,
     sign_asymmetric,
@@ -47,6 +48,8 @@ def test_wrong_public_key_fails_verification(alg, keypair_for):
     # Generate a fresh, unrelated key of the same family for the negative test.
     if alg in RSA_ALGORITHMS or alg in PSS_ALGORITHMS:
         other = rsa.generate_private_key(65537, 2048)
+    elif alg in OKP_ALGORITHMS:
+        other = (ed448.Ed448PrivateKey if alg == "Ed448" else ed25519.Ed25519PrivateKey).generate()
     else:
         curve = {"ES256": ec.SECP256R1, "ES384": ec.SECP384R1, "ES512": ec.SECP521R1}[alg]
         other = ec.generate_private_key(curve())
@@ -128,4 +131,46 @@ def test_algorithm_constants_are_disjoint():
     assert RSA_ALGORITHMS.isdisjoint(EC_ALGORITHMS)
     assert RSA_ALGORITHMS.isdisjoint(PSS_ALGORITHMS)
     assert EC_ALGORITHMS.isdisjoint(PSS_ALGORITHMS)
-    assert ASYMMETRIC_ALGORITHMS == RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS
+    assert OKP_ALGORITHMS.isdisjoint(RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS)
+    assert ASYMMETRIC_ALGORITHMS == (
+        RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS | OKP_ALGORITHMS
+    )
+
+
+@pytest.mark.parametrize(("alg", "expected_len"), [("Ed25519", 64), ("Ed448", 114), ("EdDSA", 64)])
+def test_eddsa_signature_is_raw_rfc8032_bytes(alg, expected_len, keypair_for):
+    _h, _p, sig = _parts({"sub": "1"}, alg, keypair_for(alg).private_pem)
+    assert len(base64url_decode(sig)) == expected_len
+
+
+def test_eddsa_accepts_either_curve(ed448_keypair):
+    h, p, sig = _parts({"sub": "1"}, "EdDSA", ed448_keypair.private_pem)
+    assert verify_asymmetric(h, p, sig, ed448_keypair.public_pem, "EdDSA") is True
+
+
+@pytest.mark.parametrize(
+    ("alg", "pair"), [("Ed25519", "ed448_keypair"), ("Ed448", "ed25519_keypair")]
+)
+def test_fully_specified_eddsa_rejects_other_curve(alg, pair, request):
+    kp = request.getfixturevalue(pair)
+    with pytest.raises(ValueError, match=f"{alg} requires an {alg}"):
+        sign_asymmetric("h", "p", kp.private_pem, alg)
+    with pytest.raises(ValueError, match=f"{alg} requires an {alg}"):
+        verify_asymmetric("h", "p", "sig", kp.public_pem, alg)
+
+
+@pytest.mark.parametrize("alg", sorted(OKP_ALGORITHMS))
+def test_eddsa_rejects_non_edwards_keys(alg, rsa_keypair, ec_p256_keypair):
+    for kp in (rsa_keypair, ec_p256_keypair):
+        with pytest.raises(ValueError, match="requires an"):
+            sign_asymmetric("h", "p", kp.private_pem, alg)
+
+
+def test_x25519_key_is_not_a_signing_key():
+    pem = (
+        x25519.X25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+    )
+    with pytest.raises(ValueError, match="requires an"):
+        verify_asymmetric("h", "p", "sig", pem, "EdDSA")

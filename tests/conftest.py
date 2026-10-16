@@ -11,8 +11,9 @@ from dataclasses import dataclass
 import pytest
 from click.testing import CliRunner
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 
+from jwt_toolkit.core.crypto import canonical_algorithm
 from tests.helpers import TEST_SECRET, make_token, make_unsigned_token
 
 
@@ -111,12 +112,25 @@ def ec_p521_keypair() -> KeyPair:
     return _to_pem(ec.generate_private_key(ec.SECP521R1()))
 
 
+@pytest.fixture(scope="session")
+def ed25519_keypair() -> KeyPair:
+    return _to_pem(ed25519.Ed25519PrivateKey.generate())
+
+
+@pytest.fixture(scope="session")
+def ed448_keypair() -> KeyPair:
+    return _to_pem(ed448.Ed448PrivateKey.generate())
+
+
 @pytest.fixture
 def keypair_for(
+    *,
     rsa_keypair: KeyPair,
     ec_p256_keypair: KeyPair,
     ec_p384_keypair: KeyPair,
     ec_p521_keypair: KeyPair,
+    ed25519_keypair: KeyPair,
+    ed448_keypair: KeyPair,
 ) -> Callable[[str], KeyPair]:
     """Return the keypair appropriate for a given JWS alg."""
     by_alg: dict[str, KeyPair] = {
@@ -129,9 +143,12 @@ def keypair_for(
         "ES256": ec_p256_keypair,
         "ES384": ec_p384_keypair,
         "ES512": ec_p521_keypair,
+        "EdDSA": ed25519_keypair,
+        "Ed25519": ed25519_keypair,
+        "Ed448": ed448_keypair,
     }
 
     def _lookup(alg: str) -> KeyPair:
-        return by_alg[alg.upper()]
+        return by_alg[canonical_algorithm(alg) or alg]
 
     return _lookup

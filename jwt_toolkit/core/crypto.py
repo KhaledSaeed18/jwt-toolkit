@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
@@ -28,7 +28,10 @@ SUPPORTED_ALGORITHMS = {
 RSA_ALGORITHMS = frozenset({"RS256", "RS384", "RS512"})
 EC_ALGORITHMS = frozenset({"ES256", "ES384", "ES512"})
 PSS_ALGORITHMS = frozenset({"PS256", "PS384", "PS512"})
-ASYMMETRIC_ALGORITHMS = RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS
+# RFC 8037 EdDSA. RFC 9864 deprecates the polymorphic "EdDSA" in favour of the
+# fully-specified Ed25519/Ed448, but existing deployments still emit it.
+OKP_ALGORITHMS = frozenset({"EdDSA", "Ed25519", "Ed448"})
+ASYMMETRIC_ALGORITHMS = RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS | OKP_ALGORITHMS
 
 # Union of every algorithm the toolkit can produce or verify a signature for.
 ALL_SIGNING_ALGORITHMS = frozenset(SUPPORTED_ALGORITHMS) | ASYMMETRIC_ALGORITHMS
@@ -65,6 +68,18 @@ _EC_CURVE_BY_ALG: dict[str, type[ec.EllipticCurve]] = {
     "ES256": ec.SECP256R1,
     "ES384": ec.SECP384R1,
     "ES512": ec.SECP521R1,
+}
+
+# Key classes accepted for each EdDSA alg; plain "EdDSA" takes its curve from the key.
+_OKP_PRIVATE_KEY_TYPES: dict[str, tuple[type, ...]] = {
+    "EdDSA": (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey),
+    "Ed25519": (ed25519.Ed25519PrivateKey,),
+    "Ed448": (ed448.Ed448PrivateKey,),
+}
+_OKP_PUBLIC_KEY_TYPES: dict[str, tuple[type, ...]] = {
+    "EdDSA": (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey),
+    "Ed25519": (ed25519.Ed25519PublicKey,),
+    "Ed448": (ed448.Ed448PublicKey,),
 }
 
 # Raw component size (in bytes) for each ES* signature. JWS ECDSA signatures are
@@ -182,11 +197,20 @@ def _ensure_key_matches_alg(key, alg: str, *, is_private: bool) -> None:
         if not isinstance(key.curve, expected_curve):
             raise ValueError(f"{alg} requires curve {expected_curve.name}, got {key.curve.name}")
         return
+    if alg in OKP_ALGORITHMS:
+        expected_okp = (_OKP_PRIVATE_KEY_TYPES if is_private else _OKP_PUBLIC_KEY_TYPES)[alg]
+        if not isinstance(key, expected_okp):
+            curve = "an Ed25519 or Ed448" if alg == "EdDSA" else f"an {alg}"
+            raise ValueError(f"{alg} requires {curve} {role} key, got {type(key).__name__}")
+        return
     # Should be unreachable — guarded by the caller's alg check.
     raise ValueError(f"Unsupported asymmetric algorithm: {alg}")
 
 
 def _sign_with_private_key(private_key, message: bytes, alg: str) -> bytes:
+    if alg in OKP_ALGORITHMS:
+        # EdDSA hashes internally and emits the raw RFC 8032 signature.
+        return private_key.sign(message)
     hash_alg = _HASH_BY_ALG[alg]()
     if alg in RSA_ALGORITHMS:
         return private_key.sign(message, padding.PKCS1v15(), hash_alg)
@@ -203,6 +227,9 @@ def _sign_with_private_key(private_key, message: bytes, alg: str) -> bytes:
 
 
 def _verify_with_public_key(public_key, message: bytes, raw_sig: bytes, alg: str) -> None:
+    if alg in OKP_ALGORITHMS:
+        public_key.verify(raw_sig, message)
+        return
     hash_alg = _HASH_BY_ALG[alg]()
     if alg in RSA_ALGORITHMS:
         public_key.verify(raw_sig, message, padding.PKCS1v15(), hash_alg)
