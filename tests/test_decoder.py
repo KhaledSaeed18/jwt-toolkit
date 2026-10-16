@@ -63,3 +63,14 @@ def test_whitespace_wrapped_token_is_handled():
     t = make_token({"sub": "1"})
     decoded = decode_token(f"  \n  {t}  \n  ")
     assert decoded.payload["sub"] == "1"
+
+
+@pytest.mark.parametrize("value", ["[]", "null", '"text"', "true", "42"])
+@pytest.mark.parametrize("part", ["header", "payload"])
+def test_non_object_part_raises_decode_error(part, value):
+    obj = _b64('{"alg":"HS256"}')
+    header, payload = (_b64(value), obj) if part == "header" else (obj, _b64(value))
+    with pytest.raises(TokenDecodeError) as exc:
+        decode_token(f"{header}.{payload}.sig")
+    assert exc.value.code == "invalid_json_object"
+    assert part in exc.value.headline

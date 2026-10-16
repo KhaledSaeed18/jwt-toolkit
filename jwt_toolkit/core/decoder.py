@@ -61,6 +61,18 @@ def decode_token(token: str) -> DecodedToken:
                 "The token structure may be corrupted",
             ),
         ) from exc
+    # RFC 7515/7519: the protected header and the claims set must be JSON objects.
+    for label, part in (("header", header), ("payload", payload)):
+        if not isinstance(part, dict):
+            raise TokenDecodeError(
+                code="invalid_json_object",
+                title="Parse Error",
+                headline=f"Token {label} is valid JSON but not a JSON object",
+                details=(
+                    f"Decoded {label} type : {type(part).__name__}",
+                    "A JWT header and payload must each be a JSON object",
+                ),
+            )
     return DecodedToken(
         header=header,
         payload=payload,

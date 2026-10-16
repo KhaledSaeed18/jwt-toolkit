@@ -131,6 +131,19 @@ def test_malformed_token_exits_2(runner):
     assert result.exit_code == 2
 
 
+@pytest.mark.parametrize(
+    ("header", "payload"),
+    [([], {"sub": "1"}), ({"alg": "HS256"}, ["not", "an", "object"])],
+)
+def test_non_object_header_or_payload_exits_2_without_traceback(runner, header, payload):
+    h = base64url_encode(json.dumps(header).encode())
+    p = base64url_encode(json.dumps(payload).encode())
+    result = invoke(runner, f"{h}.{p}.sig", "--secret", "testsecret", "--json")
+    assert result.exit_code == 2
+    assert not isinstance(result.exception, AttributeError)
+    assert json.loads(result.output)["error"] == "invalid_json_object"
+
+
 # Asymmetric verification
 
 
