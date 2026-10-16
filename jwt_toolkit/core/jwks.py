@@ -150,7 +150,7 @@ def _ensure_jwk_matches_alg(jwk: dict, alg: str) -> None:
     # A JWK may carry its own `alg` field — if present it must agree with the
     # token's alg, otherwise the keyset is configured for a different purpose.
     jwk_alg = jwk.get("alg")
-    if jwk_alg is not None and str(jwk_alg).upper() != alg:
+    if jwk_alg is not None and jwk_alg != alg:
         raise ValueError(f"JWK alg={jwk_alg!r} does not match token alg={alg}")
 
     # For EC keys, the curve in the JWK must match the curve required by the alg.

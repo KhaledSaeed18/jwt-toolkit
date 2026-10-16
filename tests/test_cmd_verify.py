@@ -420,3 +420,19 @@ def test_unencoded_payload_header_is_rejected(runner, b64):
 def test_b64_true_is_accepted(runner):
     result = invoke(runner, _crit_token({"b64": True}), "--secret", "testsecret")
     assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("alg", ["hs256", "Hs256", "rs256"])
+def test_non_canonical_alg_case_exits_2(runner, alg):
+    t = make_token({"sub": "1", "exp": 9_999_999_999}, header_override={"alg": alg})
+    result = invoke(runner, t, "--secret", "testsecret")
+    assert result.exit_code == 2
+    assert "case-sensitive" in result.output
+
+
+@pytest.mark.parametrize("alg", [256, None, ["HS256"]])
+def test_non_string_alg_exits_2(runner, alg):
+    t = make_token({"sub": "1"}, header_override={"alg": alg})
+    result = invoke(runner, t, "--secret", "testsecret")
+    assert result.exit_code == 2
+    assert "Unsupported algorithm" in result.output
