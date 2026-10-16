@@ -6,6 +6,7 @@ from urllib.request import urlopen
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
+from jwt_toolkit.core.crypto import canonical_algorithm
 from jwt_toolkit.core.encoding import base64url_decode
 
 # JWKS module — resolve a verification key from a JSON Web Key Set (RFC 7517).
@@ -137,7 +138,7 @@ def _filter_by_kid(keys: list, kid: str | None) -> list:
 
 
 def _ensure_jwk_matches_alg(jwk: dict, alg: str) -> None:
-    alg = alg.upper()
+    alg = canonical_algorithm(alg) or alg
     expected_kty = _KTY_BY_ALG.get(alg)
     if expected_kty is None:
         raise ValueError(f"Cannot resolve JWK for unsupported alg: {alg}")

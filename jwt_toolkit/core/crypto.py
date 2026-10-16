@@ -33,6 +33,15 @@ ASYMMETRIC_ALGORITHMS = RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS
 # Union of every algorithm the toolkit can produce or verify a signature for.
 ALL_SIGNING_ALGORITHMS = frozenset(SUPPORTED_ALGORITHMS) | ASYMMETRIC_ALGORITHMS
 
+_CANONICAL_BY_UPPER = {name.upper(): name for name in ALL_SIGNING_ALGORITHMS}
+
+
+def canonical_algorithm(name: str) -> str | None:
+    # Case-insensitive lookup for callers passing a user-typed name. Token
+    # headers must still match the registered spelling exactly (RFC 7515 4.1.1).
+    return _CANONICAL_BY_UPPER.get(name.upper())
+
+
 # Hash algorithm to use for each asymmetric alg. The trailing digits in the JWS
 # alg name (e.g. "RS256" → SHA-256) determine the hash, regardless of family.
 # Typed as a callable factory so mypy doesn't see the values as the abstract
@@ -98,7 +107,7 @@ def verify_signature(
 
 
 def sign_asymmetric(header_b64: str, payload_b64: str, private_key_pem: bytes, alg: str) -> str:
-    alg = alg.upper()
+    alg = canonical_algorithm(alg) or alg
     if alg not in ASYMMETRIC_ALGORITHMS:
         raise ValueError(
             f"Unsupported algorithm: {alg}. "
@@ -117,7 +126,7 @@ def verify_asymmetric(
     public_key_pem: bytes,
     alg: str,
 ) -> bool:
-    alg = alg.upper()
+    alg = canonical_algorithm(alg) or alg
     if alg not in ASYMMETRIC_ALGORITHMS:
         raise ValueError(
             f"Unsupported algorithm: {alg}. "
