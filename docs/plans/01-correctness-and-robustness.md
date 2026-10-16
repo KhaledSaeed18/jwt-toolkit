@@ -185,22 +185,21 @@ Scope:
 
 Acceptance: `forge` output and `--json` descriptions no longer claim these variants detect the named flaw, and the variant names and JSON shape are unchanged.
 
-### BUG-009 — `download-wordlists` falls back to unverified TLS
+### BUG-009 — `download-wordlists` carries a dead unverified-TLS fallback and a `main`-pinned URL
 
-Evidence: **Inspected**, P0.
+Evidence: **Confirmed**, P1. Corrected after reproduction: the initial inspection overstated the impact.
 
-`commands/download_wordlists.py::_open_url` catches `ssl.SSLCertVerificationError` and retries with `ssl._create_unverified_context()`, printing only a warning. The SHA-256 pin still catches tampering on the default URL. For `--source` URLs, integrity checks are skipped entirely, so an on-path attacker can substitute the list.
+`commands/download_wordlists.py::_open_url` catches `ssl.SSLCertVerificationError` and retries with `ssl._create_unverified_context()`. Against a local self-signed HTTPS server, `urlopen` raises `URLError` wrapping the certificate error, so that branch never runs and the download already fails closed with a raw "Network error". The fallback is still a latent downgrade that a refactor could activate.
 
-Separately, the pin targets the file on `main`. Any wordlist update on `main` makes integrity checks fail for every already-released version.
+Separately, the default URL targets `main` while the SHA-256 pin ships with each release. Any wordlist update on `main` would make integrity checks fail for every already-released version.
 
 Scope:
 
-- Remove the unverified fallback. On certificate failure, fail with guidance (`SSL_CERT_FILE`, corporate proxy CA bundles).
-- Fetch from a version-pinned URL (`.../v{version}/wordlists/...`), or ship the list in the wheel, so the pin and the content always match.
-- Add an optional `--sha256` for custom sources.
-- Bound the response size.
+- Remove the unverified fallback, and report certificate failures with guidance (`SSL_CERT_FILE`, proxy CA bundles).
+- Fetch from the version tag (`.../v{version}/wordlists/...`), or ship the list in the wheel, so the pin and the content always match.
+- Follow-ons: an optional `--sha256` for custom sources, and a bounded response size.
 
-Acceptance: a local TLS test server with an untrusted certificate causes a hard failure and leaves no file behind. Updating the list on `main` does not break released versions.
+Acceptance: an untrusted certificate causes a hard failure and leaves no file behind, and updating the list on `main` does not break released versions.
 
 ## Reproduction script for the confirmed baseline observations
 

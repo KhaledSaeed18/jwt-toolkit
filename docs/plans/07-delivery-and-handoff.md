@@ -19,7 +19,7 @@ These are scope suggestions, not deadlines. Move independently valuable hardenin
 2. Header/algorithm enforcement (BUG-003/004) and shared validation tests.
 3. Consistent error envelope (BUG-005), including file/key/network errors.
 4. Release gate and documentation alignment (RELEASE-001/DOC-001).
-5. `crack` wordlist handling (BUG-006), download TLS fallback (BUG-009), and `forge` description relabel (BUG-008), each independently reviewable.
+5. `crack` wordlist handling (BUG-006), download TLS fallback and URL pin (BUG-009), and `forge` description relabel (BUG-008), each independently reviewable.
 6. Behavior-preserving refactor steps from [08](08-architecture-refactor.md), in its stated order, before the policy and reporting work that depends on a core verifier.
 7. Input-boundary hardening (HARD-001) with explicit compatibility decisions.
 8. Reporting primitives and rule catalogue (REPORT-001/002).
