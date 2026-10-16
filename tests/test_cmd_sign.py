@@ -61,6 +61,16 @@ def test_sign_invalid_header_json_exits_2(runner):
     assert result.exit_code == 2
 
 
+@pytest.mark.parametrize("value", ["[]", "null", '"text"', "true", "42"])
+@pytest.mark.parametrize("flag", ["--payload", "--header"])
+def test_sign_non_object_json_exits_2(runner, flag, value):
+    args = {"--payload": '{"sub":"1"}', "--header": '{"alg":"HS256"}', flag: value}
+    result = invoke(runner, *[x for kv in args.items() for x in kv], "--secret", "s")
+    assert result.exit_code == 2
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "must be a JSON object" in result.output
+
+
 def test_sign_empty_secret_exits_2(runner):
     result = invoke(runner, "--payload", '{"sub":"1"}', "--secret", "")
     assert result.exit_code == 2

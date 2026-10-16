@@ -96,7 +96,7 @@ def sign(
 
 def _parse_json_arg(raw: str, *, label: str) -> dict:
     try:
-        return json.loads(raw)
+        value = json.loads(raw)
     except json.JSONDecodeError as exc:
         print_error(
             f"Invalid {label} JSON",
@@ -104,6 +104,14 @@ def _parse_json_arg(raw: str, *, label: str) -> dict:
             title="Invalid Input",
         )
         raise SystemExit(2) from exc
+    if not isinstance(value, dict):
+        print_error(
+            f"The {label} must be a JSON object",
+            f"Got a JSON {type(value).__name__}; a JWT {label} is always an object.",
+            title="Invalid Input",
+        )
+        raise SystemExit(2)
+    return value
 
 
 def _validate_key_inputs(alg: str, *, secret: str | None, private_key_path: Path | None) -> None:
