@@ -54,7 +54,7 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     "public_key_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
-    help="PEM public key (RS*/PS*/ES*/Ed*) — when provided, asymmetric signature verification "
+    help="PEM public key or X.509 certificate (RS*/PS*/ES*/Ed*) — when provided, asymmetric signature verification "
     "is included in the report. Mutually exclusive with --secret.",
 )
 @click.option(
