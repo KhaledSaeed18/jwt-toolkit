@@ -224,20 +224,36 @@ cases = [
     ("non-object header", [], {}),
     ("non-object payload", {"alg": "HS256"}, []),
     ("NaN expiry", {"alg": "HS256"}, {"exp": float("nan")}),
-    ("unknown critical header", {"alg": "HS256", "crit": ["custom"],
-                                 "custom": True}, {"exp": 4102444800}),
+    (
+        "unknown critical header",
+        {"alg": "HS256", "crit": ["custom"], "custom": True},
+        {"exp": 4102444800},
+    ),
     ("lowercase algorithm", {"alg": "hs256"}, {"exp": 4102444800}),
 ]
 for label, header, payload in cases:
-    result = CliRunner().invoke(cli, [
-        "--quiet", "verify", token(header, payload),
-        "--secret", "local-test-secret", "--json",
-    ])
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--quiet",
+            "verify",
+            token(header, payload),
+            "--secret",
+            "local-test-secret",
+            "--json",
+        ],
+    )
     print(label, result.exit_code, type(result.exception).__name__, result.output)
 
-result = CliRunner().invoke(cli, [
-    "--quiet", "verify", token({"alg": "HS256"}, {}), "--json",
-])
+result = CliRunner().invoke(
+    cli,
+    [
+        "--quiet",
+        "verify",
+        token({"alg": "HS256"}, {}),
+        "--json",
+    ],
+)
 print("missing key", result.exit_code, result.output)
 ```
 
