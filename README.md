@@ -257,6 +257,12 @@ Output:
 ╰──────────────────────────────────────────────────╯
 ```
 
+Add `--raw` to print only the secret and a newline, which is easier to capture in scripts:
+
+```bash
+jwt-toolkit generate-secret --raw > hs256.secret
+```
+
 ### Crack a weak secret
 
 Input:

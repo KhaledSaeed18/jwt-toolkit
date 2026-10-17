@@ -1,3 +1,4 @@
+import base64
 import re
 
 from jwt_toolkit.cli import cli
@@ -82,3 +83,29 @@ def test_output_reports_strength_label(runner):
 
     result = invoke(runner, "--bits", "128")
     assert "moderate" in result.output.lower()
+
+
+def test_raw_hex_prints_only_the_secret(runner):
+    result = invoke(runner, "--bits", "128", "--raw")
+    assert result.exit_code == 0
+    assert re.fullmatch(r"[0-9a-f]{32}\n", result.output)
+
+
+def test_raw_base64_round_trips_to_requested_bytes(runner):
+    result = invoke(runner, "--bits", "256", "--encoding", "base64", "--raw")
+    assert result.exit_code == 0
+    assert result.output.endswith("\n")
+    assert len(base64.urlsafe_b64decode(result.output.strip())) == 32
+
+
+def test_raw_output_survives_quiet_mode(runner, monkeypatch):
+    # --quiet writes JWT_TOOLKIT_QUIET into os.environ; monkeypatch restores it afterwards.
+    monkeypatch.setenv("JWT_TOOLKIT_QUIET", "1")
+    result = runner.invoke(cli, ["--quiet", "generate-secret", "--raw"])
+    assert result.exit_code == 0
+    assert re.fullmatch(r"[0-9a-f]{64}\n", result.output)
+
+
+def test_raw_still_validates_bits(runner):
+    result = invoke(runner, "--bits", "100", "--raw")
+    assert result.exit_code == 2
