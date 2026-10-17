@@ -159,6 +159,7 @@ _COMMANDS: tuple[tuple[str, str], ...] = (
     ("sign", "Mint a new JWT from a payload and HMAC or asymmetric key."),
     ("audit", "Static security analysis of a JWT — no key required."),
     ("verify", "Verify a JWT's signature and standard claims."),
+    ("diff", "Compare two JWTs and show which fields changed."),
     ("forge", "Emit defensive attack-shaped variants of a JWT for self-audit."),
     ("crack", "Brute-force a weak HMAC secret using a wordlist."),
     ("generate-secret", "Emit a cryptographically strong random secret."),
@@ -178,6 +179,7 @@ _EXAMPLES: tuple[tuple[str, str], ...] = (
         "verify against a JWKS",
         "jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json",
     ),
+    ("compare two tokens", "jwt-toolkit diff @before.jwt @after.jwt"),
     (
         "forge defensive test cases",
         "jwt-toolkit forge <token> --public-key key.pub.pem",
