@@ -252,6 +252,39 @@ def test_present_required_claim_is_not_flagged():
     assert _find(report.findings, "iss") is None
 
 
+def test_required_claims_outside_the_defaults_are_checked():
+    report = run_audit(
+        {"alg": "RS256", "typ": "JWT"},
+        {"exp": int(time.time()) + 60, "iat": int(time.time()), "role": "user"},
+        required_claims=frozenset({"sub", "tenant", "role"}),
+    )
+    sub_finding = _find(report.findings, "sub")
+    tenant_finding = _find(report.findings, "tenant")
+    assert sub_finding is not None and sub_finding.severity is Severity.WARN
+    assert tenant_finding is not None and tenant_finding.severity is Severity.WARN
+    assert _find(report.findings, "role") is None
+
+
+def test_required_jti_upgrades_the_jti_finding_without_duplicating_it():
+    report = run_audit(
+        {"alg": "RS256", "typ": "JWT"},
+        {"exp": int(time.time()) + 60, "iat": int(time.time())},
+        required_claims=frozenset({"jti"}),
+    )
+    jti_findings = [f for f in report.findings if f.field == "jti"]
+    assert [f.severity for f in jti_findings] == [Severity.WARN]
+
+
+def test_required_exp_relies_on_the_expiry_rule():
+    report = run_audit(
+        {"alg": "RS256", "typ": "JWT"},
+        {"iat": int(time.time())},
+        required_claims=frozenset({"exp"}),
+    )
+    exp_findings = [f for f in report.findings if f.field == "exp"]
+    assert [f.severity for f in exp_findings] == [Severity.WARN]
+
+
 # Grading
 
 

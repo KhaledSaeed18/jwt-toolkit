@@ -93,6 +93,14 @@ def test_require_upgrades_missing_iss_to_warn(runner):
     assert iss_with["severity"] == "WARN"
 
 
+def test_require_sub_flags_a_missing_sub_and_fails_strict(runner):
+    t = make_token({"exp": int(time.time()) + 3600, "iat": int(time.time())})
+    result = invoke(runner, t, "--json", "--strict", "--require", "sub")
+    assert result.exit_code == 1
+    sub = next(f for f in json.loads(result.output)["findings"] if f["field"] == "sub")
+    assert sub["severity"] == "WARN"
+
+
 # --secret adds signature verification
 
 
