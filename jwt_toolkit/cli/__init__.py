@@ -50,7 +50,7 @@ Examples:
   jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json
   jwt-toolkit diff @before.jwt @after.jwt
   jwt-toolkit forge <token> --public-key key.pub.pem
-  jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8
+  jwt-toolkit crack <token> wordlists/common-secrets.txt --workers 4
   jwt-toolkit generate-secret --bits 256 --encoding base64
   jwt-toolkit download-wordlists --output-dir wordlists
 
