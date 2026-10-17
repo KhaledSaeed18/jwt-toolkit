@@ -361,3 +361,29 @@ def test_sign_passphrase_file_without_private_key_exits_2(runner, tmp_path):
         runner, "--payload", '{"sub":"1"}', "--secret", "s", "--passphrase-file", str(pw)
     )
     assert result.exit_code == 2
+
+
+def test_secret_file_matches_inline_secret(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text("filesecret\n")
+    from_file = invoke(runner, "--payload", '{"sub":"1"}', "--secret-file", str(path))
+    inline = invoke(runner, "--payload", '{"sub":"1"}', "--secret", "filesecret")
+    assert from_file.exit_code == 0
+    assert from_file.output == inline.output
+
+
+def test_secret_and_secret_file_together_are_rejected(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text("filesecret")
+    result = invoke(runner, "--payload", '{"sub":"1"}', "--secret", "x", "--secret-file", str(path))
+    assert result.exit_code == 2
+    assert "not both" in result.output
+    assert "filesecret" not in result.output
+
+
+def test_empty_secret_file_is_rejected(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text("\n")
+    result = invoke(runner, "--payload", '{"sub":"1"}', "--secret-file", str(path))
+    assert result.exit_code == 2
+    assert "empty" in result.output

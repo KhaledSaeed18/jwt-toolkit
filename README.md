@@ -278,7 +278,7 @@ Output:
 
 | Family  | `alg` values                    | Key input                                       |
 | ------- | ------------------------------- | ----------------------------------------------- |
-| HMAC    | `HS256`, `HS384`, `HS512`       | `--secret`                                      |
+| HMAC    | `HS256`, `HS384`, `HS512`       | `--secret` or `--secret-file`                   |
 | RSA     | `RS256`, `RS384`, `RS512`       | PEM key or JWKS (`kty: RSA`)                    |
 | RSA-PSS | `PS256`, `PS384`, `PS512`       | PEM key or JWKS (`kty: RSA`)                    |
 | ECDSA   | `ES256`, `ES384`, `ES512`       | PEM key or JWKS (`kty: EC`)                     |
@@ -293,6 +293,14 @@ Suppress the banner and color output for clean machine-readable runs:
 ```bash
 jwt-toolkit --quiet audit <token> --json
 JWT_TOOLKIT_QUIET=1 NO_COLOR=1 jwt-toolkit audit <token> --json
+```
+
+Keep HMAC secrets out of shell history and process listings by reading them from a file. One trailing newline is ignored, so the output of `generate-secret --raw` works as is:
+
+```bash
+jwt-toolkit generate-secret --raw > hs256.secret
+jwt-toolkit sign --payload '{"sub":"1"}' --secret-file hs256.secret
+jwt-toolkit verify <token> --secret-file hs256.secret --json
 ```
 
 ## Use responsibly

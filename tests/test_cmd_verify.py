@@ -10,6 +10,7 @@ from jwt_toolkit.cli import cli
 from jwt_toolkit.core.crypto import sign_asymmetric
 from jwt_toolkit.core.encoding import base64url_encode
 from tests.helpers import (
+    TEST_SECRET,
     make_rs256_token,
     make_token,
     make_unsigned_token,
@@ -481,3 +482,35 @@ def test_verify_accepts_certificate_as_public_key(runner, tmp_path, keypair_for)
     result = invoke(runner, t, "--public-key", str(cert), "--json")
     assert result.exit_code == 0
     assert json.loads(result.output)["valid"] is True
+
+
+def test_secret_file_verifies_token(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text(TEST_SECRET + "\n")
+    result = invoke(runner, make_token({"sub": "1"}), "--secret-file", str(path), "--json")
+    assert result.exit_code == 0
+    assert json.loads(result.output)["valid"] is True
+
+
+def test_secret_file_with_wrong_secret_fails(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text("wrong")
+    result = invoke(runner, make_token({"sub": "1"}), "--secret-file", str(path), "--json")
+    assert result.exit_code == 1
+    assert json.loads(result.output)["valid"] is False
+
+
+def test_secret_and_secret_file_conflict_json(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text(TEST_SECRET)
+    result = invoke(
+        runner,
+        make_token({"sub": "1"}),
+        "--secret",
+        TEST_SECRET,
+        "--secret-file",
+        str(path),
+        "--json",
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "invalid_key_options"

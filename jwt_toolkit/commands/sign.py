@@ -5,6 +5,7 @@ from pathlib import Path
 import click
 
 from jwt_toolkit.cli.algorithms import is_asymmetric, is_hmac
+from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import (
     ALL_SIGNING_ALGORITHMS,
@@ -32,6 +33,7 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
     default=None,
     help="HMAC secret (HS256/HS384/HS512). Mutually exclusive with --private-key.",
 )
+@secret_file_option
 @click.option(
     "--private-key",
     "private_key_path",
@@ -66,11 +68,17 @@ def sign(
     *,
     payload_json: str,
     secret: str | None,
+    secret_path: Path | None,
     private_key_path: Path | None,
     passphrase_path: Path | None,
     alg: str,
     header_json: str | None,
 ):
+    try:
+        secret = resolve_secret(secret, secret_path)
+    except SecretInputError as exc:
+        print_error(exc.headline, *exc.details, title="Invalid Input")
+        raise SystemExit(2) from exc
     payload = _parse_json_arg(payload_json, label="payload")
     header = (
         {"alg": alg, "typ": "JWT"}

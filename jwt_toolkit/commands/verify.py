@@ -9,6 +9,7 @@ from rich.table import Table
 
 from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.decoding import (
     JSON_SCHEMA_VERSION,
     emit_error,
@@ -21,7 +22,7 @@ from jwt_toolkit.core.jwks import resolve_jwks_key
 
 # Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
 # Three key-source modes, mutually exclusive:
-#   --secret      HMAC secret (HS* tokens)
+#   --secret      HMAC secret (HS* tokens), or --secret-file to read it from a file
 #   --public-key  PEM public key (RS*/PS*/ES*/Ed* tokens)
 #   --jwks-url    JWKS endpoint or file:// path; key resolved by the token's kid
 
@@ -42,6 +43,7 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
     default=None,
     help="HMAC secret to verify against (HS256/HS384/HS512). Mutually exclusive with --public-key.",
 )
+@secret_file_option
 @click.option(
     "--public-key",
     "public_key_path",
@@ -80,6 +82,7 @@ def verify(
     token: str,
     *,
     secret: str | None,
+    secret_path: Path | None,
     public_key_path: Path | None,
     jwks_url: str | None,
     issuer: str | None,
@@ -87,6 +90,18 @@ def verify(
     leeway: int,
     as_json: bool,
 ):
+    try:
+        secret = resolve_secret(secret, secret_path)
+    except SecretInputError as exc:
+        emit_error(
+            code="invalid_key_options",
+            title="Invalid Input",
+            headline=exc.headline,
+            details=exc.details,
+            as_json=as_json,
+        )
+        raise SystemExit(2) from exc
+
     token = resolve_token(token, as_json=as_json)
 
     decoded = safe_decode(token, as_json=as_json)
@@ -179,7 +194,7 @@ def _validate_key_inputs(
             reject(f"{alg} is an HMAC algorithm — use --secret")
         if not secret:
             reject(
-                f"{alg} requires --secret",
+                f"{alg} requires --secret or --secret-file",
                 "Provide the HMAC secret the token was signed with.",
             )
         return
