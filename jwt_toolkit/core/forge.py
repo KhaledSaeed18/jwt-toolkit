@@ -34,6 +34,9 @@ class Variant:
     cve: str | None
     # The forged token, ready to feed at the user's verifier.
     token: str
+    # True when only the header changed and the original signature was kept,
+    # so a rejection does not show the verifier is free of the named flaw.
+    header_only: bool = False
 
 
 # Ordered registry of variant names that do not require any extra input.
@@ -68,6 +71,11 @@ _EMBEDDED_JWK_VALUE = {
     "alg": "HS256",
 }
 _TAMPERED_CLAIM_OVERRIDES = {"role": "admin", "admin": True}
+
+_HEADER_ONLY_NOTE = (
+    " Header handling only: the original signature is kept, so a rejection"
+    " does not rule out the flaw."
+)
 
 
 def generate_variants(
@@ -155,10 +163,12 @@ def _build_kid_path_traversal(decoded: DecodedToken, _pem: bytes | None) -> Vari
     return Variant(
         name="kid_path_traversal",
         description=(
-            f"kid={_KID_PATH_TRAVERSAL_VALUE!r} — verifier must not concatenate kid into a file path"
+            f"kid={_KID_PATH_TRAVERSAL_VALUE!r} — verifier must not concatenate kid into a file path."
+            f"{_HEADER_ONLY_NOTE}"
         ),
         cve=None,
         token=_emit(new_header, decoded.payload, signature=decoded.signature),
+        header_only=True,
     )
 
 
@@ -167,10 +177,12 @@ def _build_kid_sql_injection(decoded: DecodedToken, _pem: bytes | None) -> Varia
     return Variant(
         name="kid_sql_injection",
         description=(
-            f"kid={_KID_SQL_INJECTION_VALUE!r} — verifier must not concatenate kid into a SQL query"
+            f"kid={_KID_SQL_INJECTION_VALUE!r} — verifier must not concatenate kid into a SQL query."
+            f"{_HEADER_ONLY_NOTE}"
         ),
         cve=None,
         token=_emit(new_header, decoded.payload, signature=decoded.signature),
+        header_only=True,
     )
 
 
@@ -179,10 +191,12 @@ def _build_jku_attacker(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     return Variant(
         name="jku_attacker",
         description=(
-            f"jku={_JKU_ATTACKER_URL} — verifier must pin jku to an allow-list, not blindly fetch"
+            f"jku={_JKU_ATTACKER_URL} — verifier must pin jku to an allow-list, not blindly fetch."
+            f"{_HEADER_ONLY_NOTE}"
         ),
         cve=None,
         token=_emit(new_header, decoded.payload, signature=decoded.signature),
+        header_only=True,
     )
 
 
@@ -190,9 +204,13 @@ def _build_jwk_embedded(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     new_header = {**decoded.header, "jwk": _EMBEDDED_JWK_VALUE}
     return Variant(
         name="jwk_embedded",
-        description="JWK embedded in header — verifier must never trust header-supplied keys",
+        description=(
+            "JWK embedded in header — verifier must never trust header-supplied keys."
+            f"{_HEADER_ONLY_NOTE}"
+        ),
         cve=_CVE_JWK_INJECTION,
         token=_emit(new_header, decoded.payload, signature=decoded.signature),
+        header_only=True,
     )
 
 

@@ -24,7 +24,9 @@ from jwt_toolkit.core.forge import (
 _INTRO = (
     "These variants are designed to be REJECTED by a correctly configured verifier. "
     "Feed each one at your verifier and confirm it returns a failure. "
-    "If any variant is accepted, the verifier has the matching vulnerability."
+    "If any variant is accepted, the verifier has the matching vulnerability. "
+    "Variants marked header-only keep the original signature, so their rejection "
+    "does not prove the verifier is free of the flaw they name."
 )
 
 
@@ -94,6 +96,7 @@ def _emit_json(variants: list[Variant], *, has_public_key: bool) -> None:
                 "name": v.name,
                 "description": v.description,
                 "cve": v.cve,
+                "header_only": v.header_only,
                 "token": v.token,
             }
             for v in variants
@@ -110,7 +113,8 @@ def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
     table.add_column("CVE", style="dim", width=14)
     table.add_column("Description")
     for v in variants:
-        table.add_row(v.name, v.cve or "—", v.description)
+        name = f"{v.name}\n[dim](header-only)[/dim]" if v.header_only else v.name
+        table.add_row(name, v.cve or "—", v.description)
     console.print(table)
 
     for v in variants:
