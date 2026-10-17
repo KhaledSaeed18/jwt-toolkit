@@ -22,7 +22,7 @@ from jwt_toolkit.core.jwks import resolve_jwks_key
 # Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
 # Three key-source modes, mutually exclusive:
 #   --secret      HMAC secret (HS* tokens)
-#   --public-key  PEM public key (RS*/PS*/ES* tokens)
+#   --public-key  PEM public key (RS*/PS*/ES*/Ed* tokens)
 #   --jwks-url    JWKS endpoint or file:// path; key resolved by the token's kid
 
 RESULT_COLORS = {
@@ -47,7 +47,7 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
     "public_key_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
-    help="Path to a PEM-encoded public key (RS*/PS*/ES*). Mutually exclusive with --secret.",
+    help="Path to a PEM-encoded public key (RS*/PS*/ES*/Ed*). Mutually exclusive with --secret.",
 )
 @click.option(
     "--jwks-url",

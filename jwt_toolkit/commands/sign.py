@@ -7,6 +7,7 @@ from jwt_toolkit.cli.algorithms import is_asymmetric, is_hmac
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import (
     ALL_SIGNING_ALGORITHMS,
+    canonical_algorithm,
 )
 from jwt_toolkit.core.crypto import (
     sign as _sign_hmac,
@@ -34,7 +35,7 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
     "private_key_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
-    help="Path to a PEM-encoded private key (RS*/PS*/ES*). Mutually exclusive with --secret.",
+    help="Path to a PEM-encoded private key (RS*/PS*/ES*/Ed*). Mutually exclusive with --secret.",
 )
 @click.option(
     "--alg",
@@ -58,19 +59,20 @@ def sign(
 ):
     payload = _parse_json_arg(payload_json, label="payload")
     header = (
-        {"alg": alg.upper(), "typ": "JWT"}
+        {"alg": alg, "typ": "JWT"}
         if header_json is None
         else _parse_json_arg(header_json, label="header")
     )
 
     if "alg" not in header:
         # The emitted header must declare the algorithm actually used to sign.
-        header = {"alg": alg.upper(), **header}
+        header = {"alg": alg, **header}
     sign_alg = header["alg"]
     if not isinstance(sign_alg, str) or sign_alg not in ALL_SIGNING_ALGORITHMS:
         details = [f"Supported: {', '.join(_ALG_CHOICES)}"]
-        if isinstance(sign_alg, str) and sign_alg.upper() in ALL_SIGNING_ALGORITHMS:
-            details.append(f"alg is case-sensitive; use {sign_alg.upper()!r} in --header")
+        canonical = canonical_algorithm(sign_alg) if isinstance(sign_alg, str) else None
+        if canonical is not None:
+            details.append(f"alg is case-sensitive; use {canonical!r} in --header")
         print_error(
             f"Unsupported algorithm: {sign_alg}",
             *details,

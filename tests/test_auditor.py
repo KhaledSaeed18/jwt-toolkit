@@ -403,3 +403,31 @@ def test_boolean_time_claim_is_flagged_not_numeric(claim):
     f = _find(run_audit({"alg": "RS256", "typ": "JWT"}, payload).findings, claim)
     assert f.severity is Severity.WARN
     assert "not numeric" in f.message
+
+
+@pytest.mark.parametrize("alg", ["Ed25519", "Ed448"])
+def test_fully_specified_eddsa_is_pass(alg):
+    report = run_audit({"alg": alg, "typ": "JWT"}, {"exp": int(time.time()) + 600})
+    assert _find(report.findings, "alg").severity is Severity.PASS
+
+
+def test_polymorphic_eddsa_is_info_with_rfc9864_note():
+    f = _find(run_audit({"alg": "EdDSA", "typ": "JWT"}, {}).findings, "alg")
+    assert f.severity is Severity.INFO
+    assert "RFC 9864" in f.message
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"), [("hs256", "HS256"), ("rs256", "RS256"), ("eddsa", "EdDSA")]
+)
+def test_non_canonical_alg_case_is_flagged(raw, canonical):
+    findings = [f for f in run_audit({"alg": raw, "typ": "JWT"}, {}).findings if f.field == "alg"]
+    case = [f for f in findings if "registered spelling" in f.message]
+    assert len(case) == 1
+    assert case[0].severity is Severity.WARN
+    assert repr(canonical) in case[0].message
+
+
+def test_lowercase_hmac_with_smuggled_key_is_still_key_confusion():
+    report = run_audit({"alg": "hs256", "typ": "JWT", "jwk": {"kty": "oct"}}, {})
+    assert any("key-confusion" in f.message for f in report.findings)

@@ -274,6 +274,18 @@ Output:
 ╰──────────────────────────────────────────────╯
 ```
 
+## Supported algorithms
+
+| Family  | `alg` values                    | Key input                                       |
+| ------- | ------------------------------- | ----------------------------------------------- |
+| HMAC    | `HS256`, `HS384`, `HS512`       | `--secret`                                      |
+| RSA     | `RS256`, `RS384`, `RS512`       | PEM key or JWKS (`kty: RSA`)                    |
+| RSA-PSS | `PS256`, `PS384`, `PS512`       | PEM key or JWKS (`kty: RSA`)                    |
+| ECDSA   | `ES256`, `ES384`, `ES512`       | PEM key or JWKS (`kty: EC`)                     |
+| EdDSA   | `Ed25519`, `Ed448`, `EdDSA`     | PEM key or JWKS (`kty: OKP`)                    |
+
+`alg` is matched case-sensitively, as RFC 7515 requires. `EdDSA` is the RFC 8037 name and takes its curve from the key. RFC 9864 deprecates it in favour of `Ed25519` and `Ed448`, so `audit` reports `EdDSA` as INFO. `alg: none` is never accepted by `verify`.
+
 ## Scripting
 
 Suppress the banner and color output for clean machine-readable runs:

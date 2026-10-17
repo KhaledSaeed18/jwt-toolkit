@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from jwt_toolkit.core.crypto import sign, verify_signature
+from jwt_toolkit.core.crypto import canonical_algorithm, sign, verify_signature
 from jwt_toolkit.core.encoding import base64url_encode
 
 
@@ -49,3 +49,10 @@ def test_different_algorithms_produce_different_signatures():
     sig256 = sign(h, p, "secret", "HS256")
     sig512 = sign(h, p, "secret", "HS512")
     assert sig256 != sig512
+
+
+def test_canonical_algorithm_is_case_insensitive_for_known_names():
+    assert canonical_algorithm("hs256") == "HS256"
+    assert canonical_algorithm("Rs512") == "RS512"
+    assert canonical_algorithm("none") is None
+    assert canonical_algorithm("HS999") is None

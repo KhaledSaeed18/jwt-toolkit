@@ -1,10 +1,12 @@
 import json
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 
 from jwt_toolkit.cli import cli
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.decoder import decode_token
+from jwt_toolkit.core.encoding import base64url_encode
 
 
 def invoke(runner, *args):
@@ -223,3 +225,57 @@ def test_sign_asymmetric_wrong_key_type_for_alg_exits_2(runner, tmp_path, keypai
         "RS256",
     )
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("alg", ["EdDSA", "Ed25519", "Ed448"])
+def test_sign_and_verify_eddsa_end_to_end(runner, tmp_path, keypair_for, alg):
+    kp = keypair_for(alg)
+    priv, pub = tmp_path / "priv.pem", tmp_path / "pub.pem"
+    priv.write_bytes(kp.private_pem)
+    pub.write_bytes(kp.public_pem)
+    signed = invoke(
+        runner,
+        "--payload",
+        '{"sub":"1","exp":9999999999}',
+        "--alg",
+        alg.lower(),
+        "--private-key",
+        str(priv),
+    )
+    assert signed.exit_code == 0
+    token = signed.output.strip()
+    assert decode_token(token).header["alg"] == alg
+    verified = runner.invoke(cli, ["verify", token, "--public-key", str(pub), "--json"])
+    assert verified.exit_code == 0
+    assert json.loads(verified.output)["valid"] is True
+
+
+def test_verify_ed448_token_via_jwks_file(runner, tmp_path, ed448_keypair):
+    priv = tmp_path / "priv.pem"
+    priv.write_bytes(ed448_keypair.private_pem)
+    raw = serialization.load_pem_public_key(ed448_keypair.public_pem).public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    jwks = tmp_path / "jwks.json"
+    jwks.write_text(
+        json.dumps(
+            {"keys": [{"kty": "OKP", "crv": "Ed448", "kid": "k1", "x": base64url_encode(raw)}]}
+        )
+    )
+    header = json.dumps({"alg": "Ed448", "typ": "JWT", "kid": "k1"})
+    token = invoke(
+        runner, "--payload", '{"sub":"1"}', "--header", header, "--private-key", str(priv)
+    ).output.strip()
+    result = runner.invoke(cli, ["verify", token, "--jwks-url", jwks.as_uri()])
+    assert result.exit_code == 0
+
+
+def test_audit_verifies_eddsa_signature(runner, tmp_path, ed25519_keypair):
+    priv, pub = tmp_path / "priv.pem", tmp_path / "pub.pem"
+    priv.write_bytes(ed25519_keypair.private_pem)
+    pub.write_bytes(ed25519_keypair.public_pem)
+    token = invoke(
+        runner, "--payload", '{"sub":"1"}', "--alg", "Ed25519", "--private-key", str(priv)
+    ).output.strip()
+    result = runner.invoke(cli, ["audit", token, "--public-key", str(pub), "--json"])
+    assert json.loads(result.output)["signature_valid"] is True

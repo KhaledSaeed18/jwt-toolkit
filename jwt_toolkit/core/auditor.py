@@ -4,23 +4,16 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 
+from jwt_toolkit.core.crypto import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
+from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, canonical_algorithm
+
 # Auditor module — static security analysis of a decoded JWT header and payload.
 
 # Symmetric algorithms — vulnerable to offline brute-force if the secret is weak.
-SYMMETRIC_ALGORITHMS = {"HS256", "HS384", "HS512"}
+SYMMETRIC_ALGORITHMS = set(SUPPORTED_ALGORITHMS)
 
 # Asymmetric algorithms — public/private key pairs, no shared secret to crack.
-ASYMMETRIC_ALGORITHMS = {
-    "RS256",
-    "RS384",
-    "RS512",
-    "ES256",
-    "ES384",
-    "ES512",
-    "PS256",
-    "PS384",
-    "PS512",
-}
+ASYMMETRIC_ALGORITHMS = set(_SIGNING_ASYMMETRIC_ALGORITHMS)
 
 # Lifetime tiers, evaluated longest-first so the most severe match wins.
 # Severity is derived in _audit_expiry to keep the table flat and editable.
@@ -195,8 +188,8 @@ def _finding_sort_key(f: Finding) -> tuple[int, str]:
 
 # Header checks
 def _audit_algorithm(header: dict) -> list[Finding]:
-    alg = str(header.get("alg", "")).upper()
-    if alg == "NONE":
+    raw = header.get("alg", "")
+    if str(raw).upper() == "NONE":
         return [
             Finding(
                 Severity.CRITICAL,
@@ -205,8 +198,20 @@ def _audit_algorithm(header: dict) -> list[Finding]:
                 "Reject tokens whose header advertises alg:none at the verifier.",
             )
         ]
+    alg = canonical_algorithm(raw) if isinstance(raw, str) else None
+    findings: list[Finding] = []
+    if alg is not None and raw != alg:
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "alg",
+                f"alg {raw!r} is not the registered spelling {alg!r} — strict verifiers "
+                "reject it, and one that accepts it is normalizing untrusted input",
+                "Emit the exact registered name; alg is case-sensitive (RFC 7515 4.1.1).",
+            )
+        )
     if alg in SYMMETRIC_ALGORITHMS:
-        return [
+        findings.append(
             Finding(
                 Severity.WARN,
                 "alg",
@@ -214,17 +219,29 @@ def _audit_algorithm(header: dict) -> list[Finding]:
                 "Use a cryptographically strong secret (jwt-toolkit generate-secret) "
                 "or migrate to an asymmetric algorithm.",
             )
-        ]
-    if alg in ASYMMETRIC_ALGORITHMS:
-        return [Finding(Severity.PASS, "alg", f"{alg} uses asymmetric keys")]
-    return [
-        Finding(
-            Severity.WARN,
-            "alg",
-            f"Unknown algorithm: {alg or '(missing)'}",
-            "Pin the verifier to an explicit allow-list of algorithms.",
         )
-    ]
+    elif alg == "EdDSA":
+        findings.append(
+            Finding(
+                Severity.INFO,
+                "alg",
+                "EdDSA uses asymmetric keys, but the polymorphic EdDSA name is "
+                "deprecated (RFC 9864)",
+                "Prefer the fully-specified Ed25519 or Ed448 for new deployments.",
+            )
+        )
+    elif alg in ASYMMETRIC_ALGORITHMS:
+        findings.append(Finding(Severity.PASS, "alg", f"{alg} uses asymmetric keys"))
+    else:
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "alg",
+                f"Unknown algorithm: {raw or '(missing)'}",
+                "Pin the verifier to an explicit allow-list of algorithms.",
+            )
+        )
+    return findings
 
 
 def _audit_typ(header: dict) -> list[Finding]:
@@ -318,7 +335,9 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
 # classic key-confusion shape — the verifier may resolve the "public key" from
 # the header and then use it as an HMAC secret.
 def _audit_alg_key_confusion(header: dict) -> list[Finding]:
-    alg = str(header.get("alg", "")).upper()
+    # Case-insensitive on purpose: hs256 beside a smuggled key is the same shape.
+    raw = header.get("alg")
+    alg = canonical_algorithm(raw) if isinstance(raw, str) else None
     if alg not in SYMMETRIC_ALGORITHMS:
         return []
     smuggled = [name for name in _KEY_SMUGGLING_HEADERS if name in header]

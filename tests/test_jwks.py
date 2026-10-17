@@ -228,3 +228,59 @@ def test_resolve_jwks_key_with_unknown_kid_raises(tmp_path, rsa_keypair):
     url = _write_jwks(tmp_path, {"keys": [_rsa_jwk(public_key, kid="known")]})
     with pytest.raises(ValueError, match="No JWKS key matches"):
         resolve_jwks_key(url, kid="unknown", alg="RS256")
+
+
+def _okp_jwk(public_pem: bytes, crv: str, *, alg: str | None = None) -> dict:
+    raw = serialization.load_pem_public_key(public_pem).public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    jwk = {"kty": "OKP", "crv": crv, "x": base64url_encode(raw)}
+    if alg is not None:
+        jwk["alg"] = alg
+    return jwk
+
+
+@pytest.mark.parametrize(
+    ("alg", "crv", "pair"),
+    [
+        ("EdDSA", "Ed25519", "ed25519_keypair"),
+        ("EdDSA", "Ed448", "ed448_keypair"),
+        ("Ed25519", "Ed25519", "ed25519_keypair"),
+        ("Ed448", "Ed448", "ed448_keypair"),
+    ],
+)
+def test_okp_jwk_to_pem_verifies_real_signature(alg, crv, pair, request):
+    kp = request.getfixturevalue(pair)
+    h = base64url_encode(json.dumps({"alg": alg}).encode())
+    p = base64url_encode(b'{"sub":"1"}')
+    sig = sign_asymmetric(h, p, kp.private_pem, alg)
+    pem = jwk_to_public_pem(_okp_jwk(kp.public_pem, crv), alg)
+    assert verify_asymmetric(h, p, sig, pem, alg) is True
+
+
+@pytest.mark.parametrize(
+    ("alg", "crv"), [("Ed25519", "Ed448"), ("Ed448", "Ed25519"), ("EdDSA", "X25519")]
+)
+def test_okp_jwk_rejects_wrong_curve(alg, crv, ed25519_keypair):
+    with pytest.raises(ValueError, match="crv"):
+        jwk_to_public_pem(_okp_jwk(ed25519_keypair.public_pem, crv), alg)
+
+
+def test_okp_jwk_rejects_alg_mismatch(ed25519_keypair):
+    with pytest.raises(ValueError, match="JWK alg"):
+        jwk_to_public_pem(_okp_jwk(ed25519_keypair.public_pem, "Ed25519", alg="EdDSA"), "Ed25519")
+
+
+@pytest.mark.parametrize("x", [None, "AAAA", 123])
+def test_okp_jwk_rejects_missing_or_malformed_x(x):
+    jwk = {"kty": "OKP", "crv": "Ed25519"}
+    if x is not None:
+        jwk["x"] = x
+    with pytest.raises(ValueError, match="'x'"):
+        jwk_to_public_pem(jwk, "Ed25519")
+
+
+def test_eddsa_alg_rejects_non_okp_jwk(rsa_keypair):
+    public_key = serialization.load_pem_public_key(rsa_keypair.public_pem)
+    with pytest.raises(ValueError, match="kty"):
+        jwk_to_public_pem(_rsa_jwk(public_key), "EdDSA")

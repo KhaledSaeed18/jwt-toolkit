@@ -2,6 +2,7 @@ from jwt_toolkit.core.crypto import (
     ALL_SIGNING_ALGORITHMS,
     ASYMMETRIC_ALGORITHMS,
     SUPPORTED_ALGORITHMS,
+    canonical_algorithm,
 )
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
@@ -52,8 +53,9 @@ def ensure_signing_algorithm(header: dict) -> str:
         )
     if not isinstance(alg, str) or alg not in ALL_SIGNING_ALGORITHMS:
         details = [f"Supported: {', '.join(sorted(ALL_SIGNING_ALGORITHMS))}"]
-        if isinstance(alg, str) and alg.upper() in ALL_SIGNING_ALGORITHMS:
-            details.append(f"alg is case-sensitive; {alg!r} is not {alg.upper()!r}")
+        canonical = canonical_algorithm(alg) if isinstance(alg, str) else None
+        if canonical is not None:
+            details.append(f"alg is case-sensitive; {alg!r} is not {canonical!r}")
         shown = alg if isinstance(alg, str) else repr(alg)
         raise UnsupportedAlgorithmError(
             title="Verification Error",
@@ -64,8 +66,8 @@ def ensure_signing_algorithm(header: dict) -> str:
 
 
 def is_asymmetric(alg: str) -> bool:
-    return alg.upper() in ASYMMETRIC_ALGORITHMS
+    return canonical_algorithm(alg) in ASYMMETRIC_ALGORITHMS
 
 
 def is_hmac(alg: str) -> bool:
-    return alg.upper() in SUPPORTED_ALGORITHMS
+    return canonical_algorithm(alg) in SUPPORTED_ALGORITHMS
