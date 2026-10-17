@@ -64,8 +64,10 @@ exclude = [
 "wordlists/common-secrets.txt" = "jwt_toolkit/wordlists/common-secrets.txt"
 
 [tool.hatch.build.targets.sdist]
+# README images are linked by absolute URL, so the sdist does not need them.
 exclude = [
     ".claude/",
+    "assets/",
     ".cspell.json",
     "CLAUDE.md",
     "jwt_toolkit/core/CLAUDE.md",
