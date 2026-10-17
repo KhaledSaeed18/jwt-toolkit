@@ -1,6 +1,7 @@
 import binascii
 import os
 import time
+from importlib.resources import files
 from pathlib import Path
 
 import click
@@ -27,6 +28,8 @@ from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 # Expansion factor used to estimate total candidates before streaming starts.
 _ENCODING_MULTIPLIER = {"utf-8": 1, "hex": 1, "base64": 1, "all": 3}
+
+_BUNDLED_WORDLIST = "common-secrets.txt"
 
 # Measured: beyond ~4 workers the single reader process is the bottleneck.
 _DEFAULT_WORKERS = min(os.cpu_count() or 1, 4)
@@ -83,6 +86,16 @@ def _count_raw_lines(wordlist_path: str) -> int:
     return sum(1 for _ in _wordlist_lines(wordlist_path))
 
 
+def _bundled_wordlist() -> Path | None:
+    # Wheels ship the list as package data; a source checkout keeps it at the
+    # repository root, which is where editable installs find it.
+    packaged = files("jwt_toolkit") / "wordlists" / _BUNDLED_WORDLIST
+    if packaged.is_file():
+        return Path(str(packaged))
+    checkout = Path(__file__).resolve().parents[2] / "wordlists" / _BUNDLED_WORDLIST
+    return checkout if checkout.is_file() else None
+
+
 def _format_rate(rate: float) -> str:
     if rate >= 1_000_000:
         return f"{rate / 1_000_000:.1f}M c/s"
@@ -91,9 +104,14 @@ def _format_rate(rate: float) -> str:
     return f"{rate:.0f} c/s"
 
 
-@click.command(help="Brute-force a weak HMAC JWT secret using a wordlist.")
+@click.command(
+    help=(
+        "Brute-force a weak HMAC JWT secret using a wordlist. "
+        "Without WORDLIST, the bundled common-secrets list is used."
+    )
+)
 @click.argument("token")
-@click.argument("wordlist", type=click.Path(exists=True, readable=True))
+@click.argument("wordlist", required=False, type=click.Path(exists=True, readable=True))
 @click.option(
     "--workers",
     "--threads",
@@ -116,7 +134,7 @@ def _format_rate(rate: float) -> str:
     type=click.Path(),
     help="Write found secret to this file",
 )
-def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | None):
+def crack(token: str, wordlist: str | None, threads: int, encoding: str, output: str | None):
     token = resolve_token(token)
     decoded = safe_decode(token)
 
@@ -134,6 +152,19 @@ def crack(token: str, wordlist: str, threads: int, encoding: str, output: str | 
     except UnsupportedAlgorithmError as exc:
         render_algorithm_error(exc)
         raise SystemExit(2) from exc
+
+    if wordlist is None:
+        bundled = _bundled_wordlist()
+        if bundled is None:
+            print_error(
+                "No wordlist given and the bundled wordlist is missing",
+                "Pass a WORDLIST path, or fetch one with: jwt-toolkit download-wordlists",
+                title="Invalid Wordlist",
+            )
+            raise SystemExit(2)
+        wordlist = str(bundled)
+        if not os.environ.get("JWT_TOOLKIT_QUIET"):
+            console.print("[dim]Wordlist : bundled common-secrets.txt[/dim]")
 
     raw_count = _count_raw_lines(wordlist)
     if raw_count == 0:

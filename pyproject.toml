@@ -58,6 +58,11 @@ exclude = [
     "**/__pycache__",
 ]
 
+# Ship the wordlist inside the package so `crack` works after a plain install.
+# The source stays at wordlists/ because released versions download it from there.
+[tool.hatch.build.targets.wheel.force-include]
+"wordlists/common-secrets.txt" = "jwt_toolkit/wordlists/common-secrets.txt"
+
 [tool.hatch.build.targets.sdist]
 exclude = [
     ".claude/",
