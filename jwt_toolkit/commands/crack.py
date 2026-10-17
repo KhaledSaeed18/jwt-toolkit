@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -286,14 +287,14 @@ def _render_found(
         try:
             with Path(output).open("w") as fout:
                 fout.write(label + "\n")
-            saved_line = f"\n[dim]Saved to         : {output}[/dim]"
+            saved_line = f"\n[dim]Saved to         : {escape(output)}[/dim]"
         except OSError as exc:
-            saved_line = f"\n[dim yellow]Could not save: {exc}[/dim yellow]"
+            saved_line = f"\n[dim yellow]Could not save: {escape(str(exc))}[/dim yellow]"
 
     # Cracked = bad: the secret is dangerously weak.
     console.print(
         Panel(
-            f"[bold red]Secret:[/bold red] [bold yellow]{label}[/bold yellow]{saved_line}\n\n"
+            f"[bold red]Secret:[/bold red] [bold yellow]{escape(label)}[/bold yellow]{saved_line}\n\n"
             f"[dim]Algorithm        : {alg}[/dim]\n"
             f"[dim]Position         : #{idx + 1} of ~{total_estimate:,} candidates[/dim]\n"
             f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
