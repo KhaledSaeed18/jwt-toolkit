@@ -1,6 +1,7 @@
 import json
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 
@@ -47,7 +48,7 @@ def decode(token: str, as_json: bool):
     )
     console.print(
         Panel(
-            decoded.signature or "[dim](none)[/dim]",
+            escape(decoded.signature) if decoded.signature else "[dim](none)[/dim]",
             title="Signature",
             border_style="dim",
         )

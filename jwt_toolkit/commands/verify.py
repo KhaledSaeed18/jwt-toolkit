@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -340,7 +341,7 @@ def _render_results(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
 
     for result, check, detail in rows:
         color = RESULT_COLORS[result]
-        table.add_row(f"[{color}]{result}[/{color}]", check, detail)
+        table.add_row(f"[{color}]{result}[/{color}]", escape(check), escape(detail))
 
     console.print(table)
 

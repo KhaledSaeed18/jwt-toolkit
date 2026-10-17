@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -212,9 +213,11 @@ def _emit_rich(
     report: Report,
     sig_result: tuple[bool, str] | None,
 ) -> None:
-    console.print(Panel(json.dumps(header, indent=2), title="Header", border_style="blue"))
-    console.print(Panel(json.dumps(payload, indent=2), title="Payload", border_style="blue"))
-    console.print(Panel(signature or "(none)", title="Signature", border_style="blue"))
+    console.print(Panel(escape(json.dumps(header, indent=2)), title="Header", border_style="blue"))
+    console.print(
+        Panel(escape(json.dumps(payload, indent=2)), title="Payload", border_style="blue")
+    )
+    console.print(Panel(escape(signature or "(none)"), title="Signature", border_style="blue"))
 
     if sig_result is not None:
         valid, detail = sig_result
@@ -222,7 +225,7 @@ def _emit_rich(
         label = "VALID" if valid else "INVALID"
         console.print(
             Panel(
-                f"[bold {color}]{label}[/bold {color}]  [dim]{detail}[/dim]",
+                f"[bold {color}]{label}[/bold {color}]  [dim]{escape(detail)}[/dim]",
                 title="Signature Verification",
                 border_style=color,
             )
@@ -265,11 +268,11 @@ def _render_findings_table(report: Report) -> Table:
         colour = _SEVERITY_COLORS[f.severity]
         row = [
             f"[{colour}]{f.severity.value}[/{colour}]",
-            f.field,
-            f.message,
+            escape(f.field),
+            escape(f.message),
         ]
         if show_recs:
-            row.append(f.recommendation or "")
+            row.append(escape(f.recommendation or ""))
         table.add_row(*row)
 
     return table
