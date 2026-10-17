@@ -26,6 +26,42 @@ def test_decode_payload_content_visible(runner):
     assert "admin" in result.output
 
 
+# Time claims
+
+
+def test_time_claims_are_shown_in_utc_and_relative(runner, monkeypatch):
+    monkeypatch.setattr("jwt_toolkit.commands.decode.time.time", lambda: 1_700_000_000)
+    token = make_token({"iat": 1_700_000_000 - 120, "exp": 1_700_000_900})
+    result = invoke(runner, token)
+    assert result.exit_code == 0
+    assert "Time Claims" in result.output
+    assert "2023-11-14 22:28:20 UTC" in result.output
+    assert "in 15m" in result.output
+    assert "2m ago" in result.output
+    assert "not checked against a key" in result.output
+
+
+def test_time_claims_table_is_omitted_without_time_claims(runner):
+    result = invoke(runner, make_token({"sub": "1"}))
+    assert result.exit_code == 0
+    assert "Time Claims" not in result.output
+
+
+def test_invalid_time_claim_is_reported_without_crashing(runner):
+    result = invoke(runner, make_token({"exp": "[red]tomorrow", "nbf": 10**20}))
+    assert result.exit_code == 0
+    assert '"[red]tomorrow"' in result.output
+    assert "not a NumericDate" in result.output
+    assert "outside the range" in result.output
+
+
+def test_json_output_has_no_display_fields(runner):
+    result = invoke(runner, make_token({"exp": 1_700_000_900}), "--json")
+    document = json.loads(result.output)
+    assert document["payload"] == {"exp": 1_700_000_900}
+    assert set(document) == {"schema_version", "header", "payload", "signature"}
+
+
 # --json output
 
 
@@ -67,39 +103,3 @@ def test_decode_malformed_token_exits_2(runner):
 def test_decode_one_part_exits_2(runner):
     result = invoke(runner, "onlyone")
     assert result.exit_code == 2
-
-
-# Time claims
-
-
-def test_time_claims_are_shown_in_utc_and_relative(runner, monkeypatch):
-    monkeypatch.setattr("jwt_toolkit.commands.decode.time.time", lambda: 1_700_000_000)
-    token = make_token({"iat": 1_700_000_000 - 120, "exp": 1_700_000_900})
-    result = invoke(runner, token)
-    assert result.exit_code == 0
-    assert "Time Claims" in result.output
-    assert "2023-11-14 22:28:20 UTC" in result.output
-    assert "in 15m" in result.output
-    assert "2m ago" in result.output
-    assert "not checked against a key" in result.output
-
-
-def test_time_claims_table_is_omitted_without_time_claims(runner):
-    result = invoke(runner, make_token({"sub": "1"}))
-    assert result.exit_code == 0
-    assert "Time Claims" not in result.output
-
-
-def test_invalid_time_claim_is_reported_without_crashing(runner):
-    result = invoke(runner, make_token({"exp": "[red]tomorrow", "nbf": 10**20}))
-    assert result.exit_code == 0
-    assert '"[red]tomorrow"' in result.output
-    assert "not a NumericDate" in result.output
-    assert "outside the range" in result.output
-
-
-def test_json_output_has_no_display_fields(runner):
-    result = invoke(runner, make_token({"exp": 1_700_000_900}), "--json")
-    document = json.loads(result.output)
-    assert document["payload"] == {"exp": 1_700_000_900}
-    assert set(document) == {"schema_version", "header", "payload", "signature"}
