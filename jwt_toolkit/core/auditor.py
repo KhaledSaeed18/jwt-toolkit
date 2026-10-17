@@ -150,7 +150,7 @@ def audit(
     findings.extend(_audit_expiry(payload))
     findings.extend(_audit_nbf(payload))
     findings.extend(_audit_iat(payload))
-    findings.extend(_audit_jti(payload))
+    findings.extend(_audit_jti(payload, required="jti" in required_claims))
     findings.extend(_audit_claims(payload, required_claims=required_claims))
     findings.extend(_audit_sensitive_fields(payload))
     findings.extend(_audit_sensitive_values(payload))
@@ -512,11 +512,11 @@ def _is_numeric_date(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _audit_jti(payload: dict) -> list[Finding]:
+def _audit_jti(payload: dict, *, required: bool = False) -> list[Finding]:
     if "jti" not in payload:
         return [
             Finding(
-                Severity.INFO,
+                Severity.WARN if required else Severity.INFO,
                 "jti",
                 "No jti claim — replay-defense via a token blocklist is harder",
                 "Issue a unique jti per token so revocation and replay-detection are possible.",
@@ -525,16 +525,23 @@ def _audit_jti(payload: dict) -> list[Finding]:
     return []
 
 
+_DEFAULT_CLAIMS = frozenset({"iss", "aud", "iat"})
+
+
 def _audit_claims(
     payload: dict,
     *,
     required_claims: frozenset[str] = frozenset(),
 ) -> list[Finding]:
     findings = []
-    for claim in ("iss", "aud", "iat"):
+    for claim in _DEFAULT_CLAIMS:
         if claim not in payload:
             severity = Severity.WARN if claim in required_claims else Severity.INFO
             findings.append(Finding(severity, claim, f"Missing {claim} claim"))
+    # exp and jti have dedicated rules; any other required claim is checked here.
+    for claim in sorted(required_claims - _DEFAULT_CLAIMS - {"exp", "jti"}):
+        if claim not in payload:
+            findings.append(Finding(Severity.WARN, claim, f"Missing required {claim} claim"))
     return findings
 
 
