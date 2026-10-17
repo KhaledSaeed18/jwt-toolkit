@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -117,7 +118,7 @@ def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
         cve_suffix = f"  [dim]({v.cve})[/dim]" if v.cve else ""
         console.print(
             Panel(
-                v.token,
+                escape(v.token),
                 title=f"[bold]{v.name}[/bold]{cve_suffix}",
                 border_style="yellow",
             )
