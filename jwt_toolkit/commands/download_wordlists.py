@@ -2,9 +2,11 @@ import hashlib
 import ssl
 import urllib.error
 import urllib.request
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -19,10 +21,21 @@ from rich.progress import (
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.panels import print_error, print_success
 
-# Download command — fetches the latest common-secrets wordlist from the jwt-toolkit repo.
+# Download command — fetches the common-secrets wordlist for this release from the jwt-toolkit repo.
 
+
+def _release_ref() -> str:
+    try:
+        return f"v{version('jwt-toolkit')}"
+    except PackageNotFoundError:
+        return "main"
+
+
+# Pinned to the release tag so the checksum below always matches the content;
+# a wordlist update on main must not break integrity checks in older releases.
 _WORDLIST_URL = (
-    "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main/wordlists/common-secrets.txt"
+    "https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/"
+    f"{_release_ref()}/wordlists/common-secrets.txt"
 )
 _FILENAME = "common-secrets.txt"
 
@@ -32,17 +45,8 @@ _WORDLIST_SHA256 = "1b4bae820e98073b7148412425ea27e00cd1c4d0900ad446bdae146665ea
 
 
 def _open_url(url: str):
-    try:
-        return urllib.request.urlopen(url, timeout=30)
-    except ssl.SSLCertVerificationError:
-        console.print(
-            "[bold yellow]WARNING[/bold yellow]: TLS certificate verification failed for "
-            f"[dim]{url}[/dim]. Continuing with an unverified connection — "
-            "the download cannot be authenticated by TLS. "
-            "Check your CA bundle or use a trusted network.",
-        )
-        ctx = ssl._create_unverified_context()
-        return urllib.request.urlopen(url, context=ctx, timeout=30)
+    # Certificate failures must stay fatal: there is no unverified fallback.
+    return urllib.request.urlopen(url, timeout=30)
 
 
 def _download(url: str, dest: Path) -> int:
@@ -62,6 +66,11 @@ def _download(url: str, dest: Path) -> int:
         except urllib.error.HTTPError as exc:
             raise click.ClickException(f"HTTP {exc.code} {exc.reason}: {url}") from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ssl.SSLCertVerificationError):
+                raise click.ClickException(
+                    "TLS certificate verification failed, the download cannot be trusted. "
+                    "If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle."
+                ) from exc
             raise click.ClickException(f"Network error: {exc.reason}") from exc
 
         content_length = response.headers.get("Content-Length")
@@ -113,9 +122,9 @@ def _fmt_bytes(n: int) -> str:
 @click.command(
     "download-wordlists",
     help=(
-        "Download the latest common-secrets wordlist.\n\n"
-        "Fetches common-secrets.txt from the jwt-toolkit repository "
-        "so you always have the most up-to-date list of weak JWT secrets."
+        "Download the common-secrets wordlist for this release.\n\n"
+        "Fetches common-secrets.txt from the jwt-toolkit repository at the tag "
+        "matching the installed version, and verifies its checksum."
     ),
 )
 @click.option(
@@ -162,14 +171,14 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
     if dest.exists() and not force:
         size = dest.stat().st_size
         console.print(
-            f"[yellow]Already exists:[/yellow] {dest} ({_fmt_bytes(size)})\n"
-            f"[dim]Use --force to overwrite with the latest version[/dim]"
+            f"[yellow]Already exists:[/yellow] {escape(str(dest))} ({_fmt_bytes(size)})\n"
+            f"[dim]Use --force to download it again[/dim]"
         )
         return
 
     if source:
-        console.print(f"[dim]Source   : {url}[/dim]")
-    console.print(f"[dim]Saving to: {dest}[/dim]")
+        console.print(f"[dim]Source   : {escape(url)}[/dim]")
+    console.print(f"[dim]Saving to: {escape(str(dest))}[/dim]")
 
     try:
         written = _download(url, dest)
@@ -211,6 +220,6 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
         title="[bold green]Downloaded[/bold green]",
         footer=(
             "[dim]Use with crack:[/dim]",
-            f"[bold]jwt-toolkit crack <token> {dest}[/bold]",
+            f"[bold]jwt-toolkit crack <token> {escape(str(dest))}[/bold]",
         ),
     )
