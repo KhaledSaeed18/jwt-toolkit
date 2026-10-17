@@ -34,3 +34,25 @@ class KeyPassphraseRequiredError(ValueError):
 
     def __str__(self) -> str:
         return self.headline
+
+
+@dataclass(frozen=True)
+class InvalidDurationError(ValueError):
+    # Raised when a lifetime such as "15m" cannot be parsed or is out of range.
+    headline: str
+    details: tuple[str, ...] = ()
+    code: str = "invalid_duration"
+
+    def __str__(self) -> str:
+        return self.headline
+
+
+@dataclass(frozen=True)
+class ClaimConflictError(ValueError):
+    # Raised when a convenience option would overwrite a claim the caller set explicitly.
+    headline: str
+    details: tuple[str, ...] = ()
+    code: str = "claim_conflict"
+
+    def __str__(self) -> str:
+        return self.headline
