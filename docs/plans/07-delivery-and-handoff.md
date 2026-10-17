@@ -1,6 +1,6 @@
 # 07 — Delivery sequence and contributor handoff
 
-Status: proposal only. Baseline: [index](README.md). No implementation has started under these plans.
+Status: proposal, partly delivered. Baseline: [index](README.md). Delivered items are tracked in the [index](README.md#implementation-status).
 
 ## Candidate releases
 
