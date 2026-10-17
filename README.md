@@ -61,6 +61,9 @@ jwt-toolkit verify <token> --jwks-url https://auth.example.com/.well-known/jwks.
 # Mint a JWT (HMAC or asymmetric)
 jwt-toolkit sign --payload '{"sub":"1"}' --secret mysecret
 
+# Compare two tokens field by field
+jwt-toolkit diff @before.jwt @after.jwt
+
 # Generate defensive attack-shaped variants of a token (alg=none, alg confusion, etc.)
 jwt-toolkit forge <token> --public-key key.pub.pem
 
@@ -84,6 +87,7 @@ Run `jwt-toolkit COMMAND --help` for command-specific options.
 | `sign`               | Mint a new JWT signed with an HMAC secret or an asymmetric key.                |
 | `audit`              | Static security analysis of a JWT, no key required. CVE-referenced findings.   |
 | `verify`             | Verify the signature and standard claims of a JWT (supports JWKS).             |
+| `diff`               | Compare two JWTs and show which header and claim fields changed.               |
 | `forge`              | Emit defensive attack-shaped variants of a JWT for self-audit.                 |
 | `crack`              | Brute-force a weak HMAC secret using a wordlist.                               |
 | `generate-secret`    | Emit a cryptographically strong random secret.                                 |
@@ -193,6 +197,37 @@ Output:
 │ VALID                                    │
 ╰──────────────────────────────────────────╯
 ```
+
+### Compare two tokens
+
+Input:
+
+```bash
+jwt-toolkit diff @before.jwt @after.jwt
+```
+
+Output:
+
+```
+                         Changed Fields
+┏━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃   ┃ Section ┃ Path     ┃ Change  ┃ Before   ┃ After          ┃
+┡━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ ! │ payload │ /roles/0 │ changed │ "user"   │ "admin"        │
+├───┼─────────┼──────────┼─────────┼──────────┼────────────────┤
+│   │ payload │ /email   │ added   │ (absent) │ "a@example.com │
+│   │         │          │         │          │ "              │
+└───┴─────────┴──────────┴─────────┴──────────┴────────────────┘
+╭───────────────────────── Token Diff ─────────────────────────╮
+│ Tokens differ                                                │
+│                                                              │
+│ Field changes : 2 (1 notable)                                │
+│ Signature     : changed                                      │
+│ Neither token was verified. This compares contents only.     │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+Rows marked `!` are identity, audience, lifetime, permission, or key-selection fields. Add `--json` for a machine-readable report, or `--exit-code` to exit with status 1 when the tokens differ.
 
 ### Generate a strong secret
 

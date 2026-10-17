@@ -7,6 +7,7 @@ from jwt_toolkit.cli.banner import render_banner, render_help
 from jwt_toolkit.commands.audit import audit
 from jwt_toolkit.commands.crack import crack
 from jwt_toolkit.commands.decode import decode
+from jwt_toolkit.commands.diff import diff
 from jwt_toolkit.commands.download_wordlists import download_wordlists
 from jwt_toolkit.commands.forge import forge
 from jwt_toolkit.commands.generate_secret import generate_secret
@@ -33,6 +34,7 @@ Commands:
   sign                Mint a new JWT from a payload and HMAC secret.
   audit               Static security analysis of a JWT (no key required).
   verify              Verify the signature and standard claims of a JWT.
+  diff                Compare two JWTs and show which fields changed.
   forge               Emit defensive attack-shaped variants of a JWT for self-audit.
   crack               Brute-force a weak HMAC secret using a wordlist.
   generate-secret     Emit a cryptographically strong random secret.
@@ -46,6 +48,7 @@ Examples:
   jwt-toolkit audit <token> --strict --json
   jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com
   jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json
+  jwt-toolkit diff @before.jwt @after.jwt
   jwt-toolkit forge <token> --public-key key.pub.pem
   jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8
   jwt-toolkit generate-secret --bits 256 --encoding base64
@@ -105,6 +108,7 @@ cli.add_command(sign)
 cli.add_command(audit)
 cli.add_command(generate_secret)
 cli.add_command(verify)
+cli.add_command(diff)
 cli.add_command(forge)
 cli.add_command(crack)
 cli.add_command(download_wordlists)
