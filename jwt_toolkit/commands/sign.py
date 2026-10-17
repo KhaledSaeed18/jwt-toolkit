@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -18,7 +19,12 @@ from jwt_toolkit.core.crypto import (
     sign_asymmetric as _sign_asymmetric,
 )
 from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_encode, strict_json_loads
-from jwt_toolkit.core.errors import KeyPassphraseRequiredError
+from jwt_toolkit.core.errors import (
+    ClaimConflictError,
+    InvalidDurationError,
+    KeyPassphraseRequiredError,
+)
+from jwt_toolkit.core.lifetime import parse_duration, with_lifetime
 
 # Sign command — construct and mint a JWT from a header+payload and either an
 # HMAC secret or a PEM-encoded private key.
@@ -27,7 +33,26 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
 
 
 @click.command(help="Mint a new JWT signed with an HMAC secret or an asymmetric private key.")
-@click.option("--payload", "payload_json", required=True, help="JWT payload as a JSON string")
+@click.option(
+    "--payload",
+    "payload_json",
+    default=None,
+    help="JWT payload as a JSON string. Mutually exclusive with --payload-file.",
+)
+@click.option(
+    "--payload-file",
+    "payload_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True, allow_dash=True, path_type=Path),
+    help="Read the JWT payload JSON from a file, or - for stdin.",
+)
+@click.option(
+    "--expires-in",
+    "expires_in",
+    default=None,
+    metavar="DURATION",
+    help="Set iat to now and exp to now plus DURATION (e.g. 30s, 15m, 1h, 7d).",
+)
 @click.option(
     "--secret",
     default=None,
@@ -66,7 +91,9 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
 )
 def sign(
     *,
-    payload_json: str,
+    payload_json: str | None,
+    payload_path: Path | None,
+    expires_in: str | None,
     secret: str | None,
     secret_path: Path | None,
     private_key_path: Path | None,
@@ -79,7 +106,15 @@ def sign(
     except SecretInputError as exc:
         print_error(exc.headline, *exc.details, title="Invalid Input")
         raise SystemExit(2) from exc
-    payload = _parse_json_arg(payload_json, label="payload")
+    payload = _parse_json_arg(_payload_text(payload_json, payload_path), label="payload")
+    if expires_in is not None:
+        try:
+            payload = with_lifetime(
+                payload, lifetime_seconds=parse_duration(expires_in), now=int(time.time())
+            )
+        except (InvalidDurationError, ClaimConflictError) as exc:
+            print_error(f"--expires-in: {exc.headline}", *exc.details, title="Invalid Input")
+            raise SystemExit(2) from exc
     header = (
         {"alg": alg, "typ": "JWT"}
         if header_json is None
@@ -141,6 +176,25 @@ def sign(
             raise SystemExit(2) from exc
 
     click.echo(f"{header_b64}.{payload_b64}.{signature}")
+
+
+def _payload_text(payload_json: str | None, payload_path: Path | None) -> str:
+    if payload_path is None and payload_json is not None:
+        return payload_json
+    if payload_path is None or payload_json is not None:
+        print_error("Pass exactly one of --payload or --payload-file", title="Invalid Input")
+        raise SystemExit(2)
+    try:
+        data = sys.stdin.buffer.read() if str(payload_path) == "-" else payload_path.read_bytes()
+        return data.decode("utf-8-sig")
+    except OSError as exc:
+        print_error(
+            "Cannot read --payload-file", exc.strerror or type(exc).__name__, title="Input Error"
+        )
+        raise SystemExit(2) from exc
+    except UnicodeDecodeError as exc:
+        print_error("--payload-file must contain UTF-8 JSON", title="Invalid Input")
+        raise SystemExit(2) from exc
 
 
 def _read_passphrase(path: Path) -> bytes:

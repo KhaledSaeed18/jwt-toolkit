@@ -387,3 +387,82 @@ def test_empty_secret_file_is_rejected(runner, tmp_path):
     result = invoke(runner, "--payload", '{"sub":"1"}', "--secret-file", str(path))
     assert result.exit_code == 2
     assert "empty" in result.output
+
+
+def _payload(token: str) -> dict:
+    return decode_token(token.strip()).payload
+
+
+def test_payload_file_matches_inline_payload(runner, tmp_path):
+    path = tmp_path / "payload.json"
+    path.write_text('{"sub":"1","roles":["user"]}\n')
+    from_file = invoke(runner, "--payload-file", str(path), "--secret", "s")
+    inline = invoke(runner, "--payload", '{"sub":"1","roles":["user"]}', "--secret", "s")
+    assert from_file.exit_code == 0
+    assert from_file.output == inline.output
+
+
+def test_payload_file_accepts_utf8_bom(runner, tmp_path):
+    path = tmp_path / "payload.json"
+    path.write_bytes(b'\xef\xbb\xbf{"sub":"1"}')
+    result = invoke(runner, "--payload-file", str(path), "--secret", "s")
+    assert result.exit_code == 0
+    assert _payload(result.output) == {"sub": "1"}
+
+
+def test_payload_file_from_stdin(runner):
+    result = runner.invoke(
+        cli, ["sign", "--payload-file", "-", "--secret", "s"], input='{"sub":"stdin"}'
+    )
+    assert result.exit_code == 0
+    assert _payload(result.output) == {"sub": "stdin"}
+
+
+def test_payload_and_payload_file_together_are_rejected(runner, tmp_path):
+    path = tmp_path / "payload.json"
+    path.write_text("{}")
+    result = invoke(runner, "--payload", "{}", "--payload-file", str(path), "--secret", "s")
+    assert result.exit_code == 2
+    assert "exactly one of --payload or --payload-file" in result.output
+
+
+def test_missing_payload_is_rejected(runner):
+    result = invoke(runner, "--secret", "s")
+    assert result.exit_code == 2
+    assert "exactly one of --payload or --payload-file" in result.output
+
+
+def test_payload_file_must_be_utf8(runner, tmp_path):
+    path = tmp_path / "payload.json"
+    path.write_bytes(b"\xff\xfe{}")
+    result = invoke(runner, "--payload-file", str(path), "--secret", "s")
+    assert result.exit_code == 2
+    assert "UTF-8" in result.output
+
+
+def test_payload_file_must_hold_an_object(runner, tmp_path):
+    path = tmp_path / "payload.json"
+    path.write_text("[1]")
+    result = invoke(runner, "--payload-file", str(path), "--secret", "s")
+    assert result.exit_code == 2
+    assert "must be a JSON object" in result.output
+
+
+def test_expires_in_sets_iat_and_exp(runner, monkeypatch):
+    monkeypatch.setattr("jwt_toolkit.commands.sign.time.time", lambda: 1_700_000_000.9)
+    result = invoke(runner, "--payload", '{"sub":"1"}', "--secret", "s", "--expires-in", "15m")
+    assert result.exit_code == 0
+    assert _payload(result.output) == {"sub": "1", "iat": 1_700_000_000, "exp": 1_700_000_900}
+
+
+def test_expires_in_rejects_explicit_exp(runner):
+    result = invoke(runner, "--payload", '{"exp":1}', "--secret", "s", "--expires-in", "1h")
+    assert result.exit_code == 2
+    assert "already sets exp" in result.output
+
+
+@pytest.mark.parametrize("value", ["1.5h", "0", "-1m", "5y"])
+def test_expires_in_rejects_invalid_durations(runner, value):
+    result = invoke(runner, "--payload", "{}", "--secret", "s", "--expires-in", value)
+    assert result.exit_code == 2
+    assert "--expires-in" in result.output
