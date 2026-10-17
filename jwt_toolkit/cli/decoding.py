@@ -67,11 +67,17 @@ def safe_decode(
 
 
 def emit_error(
-    *, code: str, title: str, headline: str, details: tuple[str, ...] = (), as_json: bool
+    *,
+    code: str,
+    title: str,
+    headline: str,
+    details: tuple[str, ...] = (),
+    as_json: bool,
+    extra: dict | None = None,
 ) -> None:
     # Public entry for commands: a JSON envelope under --json, a panel otherwise.
     _emit_error(
-        code=code, title=title, headline=headline, details=details, as_json=as_json, extra=None
+        code=code, title=title, headline=headline, details=details, as_json=as_json, extra=extra
     )
 
 
