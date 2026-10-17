@@ -1,12 +1,16 @@
 import json
+import time
 
 import click
 from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
+from rich.table import Table
+from rich.text import Text
 
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.core.timestamps import describe_time_claims
 
 # Decode command — pretty-print the header and payload of a JWT without audit noise.
 
@@ -46,6 +50,9 @@ def decode(token: str, as_json: bool):
             border_style="blue",
         )
     )
+    times = _time_claims_table(decoded.payload)
+    if times is not None:
+        console.print(times)
     console.print(
         Panel(
             escape(decoded.signature) if decoded.signature else "[dim](none)[/dim]",
@@ -53,3 +60,25 @@ def decode(token: str, as_json: bool):
             border_style="dim",
         )
     )
+
+
+def _time_claims_table(payload: dict) -> Table | None:
+    claims = describe_time_claims(payload, now=time.time())
+    if not claims:
+        return None
+    table = Table(
+        title="Time Claims",
+        caption="Read from the token; not checked against a key or a clock policy.",
+        caption_style="dim",
+    )
+    table.add_column("Claim", style="bold")
+    table.add_column("Value")
+    table.add_column("UTC")
+    table.add_column("Relative")
+    for claim in claims:
+        value = Text(json.dumps(claim.value))
+        if claim.problem is not None:
+            table.add_row(claim.name, value, Text(claim.problem, style="yellow"), "")
+        else:
+            table.add_row(claim.name, value, claim.utc, claim.relative)
+    return table
