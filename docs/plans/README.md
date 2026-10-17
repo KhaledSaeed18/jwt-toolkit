@@ -1,6 +1,6 @@
 # JWT Toolkit development plans
 
-Status: proposed; no implementation work authorized by these documents.
+Status: partly implemented. See [Implementation status](#implementation-status) for what has shipped; everything else remains a proposal.
 
 Prepared: 2026-10-13. Evidence baseline: commit `62bc741a0cc60187eac6cccc83e44e5cee33e6a8` on `main`, package version `1.0.0`.
 
@@ -11,6 +11,29 @@ Revised: 2026-10-17. BUG-001 through BUG-005 re-verified on the same commit; BUG
 Make JWT Toolkit a dependable local and CI tool for inspecting tokens, verifying them against application requirements, and producing actionable security reports. Prioritize correctness and predictable behavior before expanding command coverage.
 
 This directory records the findings and proposals from the October 13 review. It is a handoff for future developers and agents, not a claim that the proposed behavior exists. The user requested documentation only. Do not treat a future reader opening this directory as authorization to implement, publish, merge, or create issues.
+
+## Implementation status
+
+Updated 2026-10-17, after the merges for the `v1.1.0` release. Items not listed here are still proposals.
+
+| Item | Status | Pull request |
+| --- | --- | --- |
+| BUG-001 to BUG-005 | Implemented | #25 |
+| BUG-006 `crack` wordlist mangling | Implemented | #27 |
+| BUG-007 `crack` parallelism | Implemented with worker processes | #28 |
+| BUG-008 `forge` header-only variants | Interim: variants are labeled; redesign still open | #31 |
+| BUG-009 `download-wordlists` TLS fallback and pinning | Implemented | #26 |
+| UX-001 Safer secret input | Partly: `--secret-file`; no prompt or `--secret-encoding` | #38 |
+| UX-002 Raw secret generation | Implemented | #36 |
+| UX-003 Signing fixtures | Implemented | #39 |
+| UX-004 Understandable timestamps | Partly: `decode` only | #41 |
+| UX-005 Compare two tokens | Implemented without `--redact`, which waits on REPORT-003 | #37 |
+| RELEASE-001 Validation before publishing | Implemented | #30 |
+| DOC-001 Support and security documentation | Implemented | #29 |
+| REF-007 Crack engine in core | Implemented | #28 |
+| REF-008 Package hygiene | Implemented | #32 |
+
+Also shipped outside these plans: EdDSA (`Ed25519`, `Ed448`, `EdDSA`) in #33; X.509 certificates and encrypted private keys in #35; the bundled wordlist in #34; literal rendering of untrusted text in #40; `audit --require` for any claim in #42.
 
 ## Reading order
 
