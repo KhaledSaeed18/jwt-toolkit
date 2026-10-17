@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -170,14 +171,14 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
     if dest.exists() and not force:
         size = dest.stat().st_size
         console.print(
-            f"[yellow]Already exists:[/yellow] {dest} ({_fmt_bytes(size)})\n"
+            f"[yellow]Already exists:[/yellow] {escape(str(dest))} ({_fmt_bytes(size)})\n"
             f"[dim]Use --force to download it again[/dim]"
         )
         return
 
     if source:
-        console.print(f"[dim]Source   : {url}[/dim]")
-    console.print(f"[dim]Saving to: {dest}[/dim]")
+        console.print(f"[dim]Source   : {escape(url)}[/dim]")
+    console.print(f"[dim]Saving to: {escape(str(dest))}[/dim]")
 
     try:
         written = _download(url, dest)
@@ -219,6 +220,6 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
         title="[bold green]Downloaded[/bold green]",
         footer=(
             "[dim]Use with crack:[/dim]",
-            f"[bold]jwt-toolkit crack <token> {dest}[/bold]",
+            f"[bold]jwt-toolkit crack <token> {escape(str(dest))}[/bold]",
         ),
     )
