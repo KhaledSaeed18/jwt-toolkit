@@ -48,6 +48,34 @@ def test_sign_custom_header_overrides_alg(runner):
     assert decoded.header["kid"] == "my-key"
 
 
+def test_sign_custom_header_without_alg_declares_signing_alg(runner):
+    result = invoke(
+        runner,
+        "--payload",
+        '{"sub":"1"}',
+        "--secret",
+        "s",
+        "--alg",
+        "HS384",
+        "--header",
+        '{"typ":"JWT","kid":"k1"}',
+    )
+    assert result.exit_code == 0
+    decoded = decode_token(result.output.strip())
+    assert decoded.header == {"alg": "HS384", "typ": "JWT", "kid": "k1"}
+    assert verify_signature(
+        decoded.header_b64, decoded.payload_b64, decoded.signature, "s", "HS384"
+    )
+
+
+def test_sign_custom_header_with_non_canonical_alg_exits_2(runner):
+    result = invoke(
+        runner, "--payload", '{"sub":"1"}', "--secret", "s", "--header", '{"alg":"hs256"}'
+    )
+    assert result.exit_code == 2
+    assert "case-sensitive" in result.output
+
+
 # Input validation
 
 
@@ -59,6 +87,23 @@ def test_sign_invalid_payload_json_exits_2(runner):
 def test_sign_invalid_header_json_exits_2(runner):
     result = invoke(runner, "--payload", '{"sub":"1"}', "--secret", "s", "--header", "{not-json}")
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("value", ["[]", "null", '"text"', "true", "42"])
+@pytest.mark.parametrize("flag", ["--payload", "--header"])
+def test_sign_non_object_json_exits_2(runner, flag, value):
+    args = {"--payload": '{"sub":"1"}', "--header": '{"alg":"HS256"}', flag: value}
+    result = invoke(runner, *[x for kv in args.items() for x in kv], "--secret", "s")
+    assert result.exit_code == 2
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "must be a JSON object" in result.output
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "1e400"])
+def test_sign_non_finite_number_exits_2(runner, number):
+    result = invoke(runner, "--payload", '{"exp":' + number + "}", "--secret", "s")
+    assert result.exit_code == 2
+    assert "not valid JSON" in result.output
 
 
 def test_sign_empty_secret_exits_2(runner):

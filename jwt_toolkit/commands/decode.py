@@ -14,7 +14,7 @@ from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_de
 @click.argument("token")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
 def decode(token: str, as_json: bool):
-    token = resolve_token(token)
+    token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
 
     if as_json:

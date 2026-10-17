@@ -13,7 +13,7 @@ from jwt_toolkit.core.errors import TokenDecodeError, UnsupportedAlgorithmError
 JSON_SCHEMA_VERSION = "0.1"
 
 
-def resolve_token(raw: str) -> str:
+def resolve_token(raw: str, *, as_json: bool = False) -> str:
     """Resolve the token string from a raw CLI argument.
 
     Accepts three forms:
@@ -29,7 +29,17 @@ def resolve_token(raw: str) -> str:
             with Path(path).open() as fh:
                 return fh.read().strip()
         except OSError as exc:
-            click.echo(f"Cannot read token from {path!r}: {exc}", err=True)
+            if as_json:
+                _emit_error(
+                    code="token_unreadable",
+                    title="Input Error",
+                    headline=f"Cannot read token from {path!r}",
+                    details=(exc.strerror or type(exc).__name__,),
+                    as_json=True,
+                    extra=None,
+                )
+            else:
+                click.echo(f"Cannot read token from {path!r}: {exc}", err=True)
             raise SystemExit(2) from exc
     return raw
 
@@ -54,6 +64,15 @@ def safe_decode(
             extra=json_extra(exc) if json_extra else None,
         )
         raise SystemExit(2) from exc
+
+
+def emit_error(
+    *, code: str, title: str, headline: str, details: tuple[str, ...] = (), as_json: bool
+) -> None:
+    # Public entry for commands: a JSON envelope under --json, a panel otherwise.
+    _emit_error(
+        code=code, title=title, headline=headline, details=details, as_json=as_json, extra=None
+    )
 
 
 def render_algorithm_error(exc: UnsupportedAlgorithmError) -> None:

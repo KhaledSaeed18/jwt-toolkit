@@ -1,6 +1,7 @@
 import json
 import time
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from rich.panel import Panel
@@ -10,11 +11,10 @@ from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import (
     JSON_SCHEMA_VERSION,
-    render_algorithm_error,
+    emit_error,
     resolve_token,
     safe_decode,
 )
-from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
@@ -84,16 +84,28 @@ def verify(
     leeway: int,
     as_json: bool,
 ):
-    token = resolve_token(token)
+    token = resolve_token(token, as_json=as_json)
 
     decoded = safe_decode(token, as_json=as_json)
     try:
         alg = ensure_signing_algorithm(decoded.header)
     except UnsupportedAlgorithmError as exc:
-        render_algorithm_error(exc)
+        emit_error(
+            code="unsupported_algorithm",
+            title=exc.title,
+            headline=exc.headline,
+            details=exc.details,
+            as_json=as_json,
+        )
         raise SystemExit(2) from exc
 
-    _validate_key_inputs(alg, secret=secret, public_key_path=public_key_path, jwks_url=jwks_url)
+    _validate_key_inputs(
+        alg,
+        secret=secret,
+        public_key_path=public_key_path,
+        jwks_url=jwks_url,
+        as_json=as_json,
+    )
 
     rows: list[tuple[str, str, str]] = []
     failed = False
@@ -107,10 +119,12 @@ def verify(
             jwks_url=jwks_url,
         )
     except ValueError as exc:
-        print_error(
-            "Could not verify signature with the provided key",
-            str(exc),
+        emit_error(
+            code="key_error",
             title="Key Error",
+            headline="Could not verify signature with the provided key",
+            details=(str(exc),),
+            as_json=as_json,
         )
         raise SystemExit(2) from exc
 
@@ -120,6 +134,7 @@ def verify(
         rows.append(("FAIL", "signature", "Signature is invalid, wrong key or tampered token"))
         failed = True
 
+    failed |= _check_critical_headers(decoded.header, rows)
     failed |= _check_temporal_claims(decoded.payload, rows, leeway=leeway)
     if issuer is not None:
         failed |= _check_issuer(decoded.payload, issuer, rows)
@@ -138,47 +153,42 @@ def _validate_key_inputs(
     secret: str | None,
     public_key_path: Path | None,
     jwks_url: str | None,
+    as_json: bool,
 ) -> None:
+    def reject(headline: str, *details: str) -> NoReturn:
+        emit_error(
+            code="invalid_key_options",
+            title="Invalid Input",
+            headline=headline,
+            details=details,
+            as_json=as_json,
+        )
+        raise SystemExit(2)
+
     # Enforce exactly-one key source. Counting truthy options is clearer than
     # nested pairwise checks once a third mode enters the picture.
     sources = sum(x is not None for x in (secret, public_key_path, jwks_url))
     if sources > 1:
-        print_error(
-            "Pass only one of --secret, --public-key, or --jwks-url",
-            title="Invalid Input",
-        )
-        raise SystemExit(2)
+        reject("Pass only one of --secret, --public-key, or --jwks-url")
 
     if is_hmac(alg):
         if jwks_url is not None or public_key_path is not None:
-            print_error(
-                f"{alg} is an HMAC algorithm — use --secret",
-                title="Invalid Input",
-            )
-            raise SystemExit(2)
+            reject(f"{alg} is an HMAC algorithm — use --secret")
         if not secret:
-            print_error(
+            reject(
                 f"{alg} requires --secret",
                 "Provide the HMAC secret the token was signed with.",
-                title="Invalid Input",
             )
-            raise SystemExit(2)
         return
 
     # Asymmetric path — accept either a PEM file or a JWKS URL.
     if public_key_path is None and jwks_url is None:
-        print_error(
+        reject(
             f"{alg} requires --public-key or --jwks-url",
             "Provide a PEM-encoded public key, or a JWKS endpoint the token's kid resolves against.",
-            title="Invalid Input",
         )
-        raise SystemExit(2)
     if secret is not None:
-        print_error(
-            f"{alg} is an asymmetric algorithm — use --public-key or --jwks-url, not --secret",
-            title="Invalid Input",
-        )
-        raise SystemExit(2)
+        reject(f"{alg} is an asymmetric algorithm — use --public-key or --jwks-url, not --secret")
 
 
 def _verify_signature(
@@ -203,6 +213,31 @@ def _verify_signature(
     )
 
 
+def _check_critical_headers(header: dict, rows: list[tuple[str, str, str]]) -> bool:
+    # RFC 7515 4.1.11: a recipient that does not implement every extension
+    # listed in crit MUST reject the token. This verifier implements none.
+    failed = False
+    if "crit" in header:
+        crit = header["crit"]
+        if (
+            not isinstance(crit, list)
+            or not crit
+            or not all(isinstance(name, str) for name in crit)
+            or len(set(crit)) != len(crit)
+        ):
+            rows.append(("FAIL", "crit", "crit header is malformed, token cannot be trusted"))
+        else:
+            rows.append(
+                ("FAIL", "crit", f"Token requires unsupported header extensions: {sorted(crit)}")
+            )
+        failed = True
+    # RFC 7797 unencoded payloads change the signing input; they are not supported.
+    if "b64" in header and header["b64"] is not True:
+        rows.append(("FAIL", "b64", "Unencoded payload (b64) is not supported, token rejected"))
+        failed = True
+    return failed
+
+
 def _check_temporal_claims(
     payload: dict, rows: list[tuple[str, str, str]], *, leeway: int = 0
 ) -> bool:
@@ -212,10 +247,11 @@ def _check_temporal_claims(
     exp = payload.get("exp")
     if exp is None:
         rows.append(("WARN", "exp", "No expiry claim"))
-    elif not isinstance(exp, (int, float)):
+    elif not _is_numeric_date(exp):
         rows.append(("FAIL", "exp", f"exp is not a number: {exp!r}"))
         failed = True
-    elif exp + leeway < now:
+    elif now >= exp + leeway:
+        # RFC 7519 4.1.4: the current time MUST be before exp.
         rows.append(("FAIL", "exp", "Token is expired"))
         failed = True
     else:
@@ -223,7 +259,7 @@ def _check_temporal_claims(
 
     nbf = payload.get("nbf")
     if nbf is not None:
-        if not isinstance(nbf, (int, float)):
+        if not _is_numeric_date(nbf):
             rows.append(("FAIL", "nbf", f"nbf is not a number: {nbf!r}"))
             failed = True
         elif nbf > now + leeway:
@@ -232,12 +268,17 @@ def _check_temporal_claims(
 
     iat = payload.get("iat")
     if iat is not None:
-        if not isinstance(iat, (int, float)):
+        if not _is_numeric_date(iat):
             rows.append(("WARN", "iat", f"iat is not a number: {iat!r}"))
         elif iat > now + _IAT_FUTURE_LEEWAY_SECONDS + leeway:
             rows.append(("WARN", "iat", "iat is in the future — clock skew or forged token"))
 
     return failed
+
+
+def _is_numeric_date(value: object) -> bool:
+    # bool subclasses int in Python, but true/false is not a NumericDate.
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _check_issuer(payload: dict, issuer: str, rows: list[tuple[str, str, str]]) -> bool:

@@ -14,7 +14,7 @@ from jwt_toolkit.core.crypto import (
 from jwt_toolkit.core.crypto import (
     sign_asymmetric as _sign_asymmetric,
 )
-from jwt_toolkit.core.encoding import base64url_encode
+from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_encode, strict_json_loads
 
 # Sign command — construct and mint a JWT from a header+payload and either an
 # HMAC secret or a PEM-encoded private key.
@@ -63,11 +63,17 @@ def sign(
         else _parse_json_arg(header_json, label="header")
     )
 
-    sign_alg = str(header.get("alg", alg)).upper()
-    if sign_alg not in ALL_SIGNING_ALGORITHMS:
+    if "alg" not in header:
+        # The emitted header must declare the algorithm actually used to sign.
+        header = {"alg": alg.upper(), **header}
+    sign_alg = header["alg"]
+    if not isinstance(sign_alg, str) or sign_alg not in ALL_SIGNING_ALGORITHMS:
+        details = [f"Supported: {', '.join(_ALG_CHOICES)}"]
+        if isinstance(sign_alg, str) and sign_alg.upper() in ALL_SIGNING_ALGORITHMS:
+            details.append(f"alg is case-sensitive; use {sign_alg.upper()!r} in --header")
         print_error(
             f"Unsupported algorithm: {sign_alg}",
-            f"Supported: {', '.join(_ALG_CHOICES)}",
+            *details,
             title="Algorithm Error",
         )
         raise SystemExit(2)
@@ -96,7 +102,14 @@ def sign(
 
 def _parse_json_arg(raw: str, *, label: str) -> dict:
     try:
-        return json.loads(raw)
+        value = strict_json_loads(raw)
+    except NonFiniteNumberError as exc:
+        print_error(
+            f"Invalid {label} JSON",
+            "NaN, Infinity, and overflowing numbers are not valid JSON.",
+            title="Invalid Input",
+        )
+        raise SystemExit(2) from exc
     except json.JSONDecodeError as exc:
         print_error(
             f"Invalid {label} JSON",
@@ -104,6 +117,14 @@ def _parse_json_arg(raw: str, *, label: str) -> dict:
             title="Invalid Input",
         )
         raise SystemExit(2) from exc
+    if not isinstance(value, dict):
+        print_error(
+            f"The {label} must be a JSON object",
+            f"Got a JSON {type(value).__name__}; a JWT {label} is always an object.",
+            title="Invalid Input",
+        )
+        raise SystemExit(2)
+    return value
 
 
 def _validate_key_inputs(alg: str, *, secret: str | None, private_key_path: Path | None) -> None:

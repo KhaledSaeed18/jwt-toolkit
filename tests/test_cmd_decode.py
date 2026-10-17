@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from jwt_toolkit.cli import cli
 from tests.helpers import make_token
 
@@ -67,3 +69,12 @@ def test_decode_malformed_token_exits_2(runner):
 def test_decode_one_part_exits_2(runner):
     result = invoke(runner, "onlyone")
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("command", ["decode", "verify", "audit", "forge"])
+def test_unreadable_token_file_is_json_under_json_flag(runner, tmp_path, command):
+    missing = tmp_path / "missing.jwt"
+    extra = ["--secret", "s"] if command == "verify" else []
+    result = runner.invoke(cli, [command, f"@{missing}", *extra, "--json"])
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "token_unreadable"

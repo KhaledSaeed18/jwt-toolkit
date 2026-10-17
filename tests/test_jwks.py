@@ -102,6 +102,13 @@ def test_jwk_to_pem_rejects_self_declared_alg_mismatch(rsa_keypair):
         jwk_to_public_pem(jwk, "RS256")
 
 
+def test_jwk_to_pem_rejects_non_canonical_alg_case(rsa_keypair):
+    public_key = serialization.load_pem_public_key(rsa_keypair.public_pem)
+    jwk = _rsa_jwk(public_key, alg="rs256")
+    with pytest.raises(ValueError, match="JWK alg"):
+        jwk_to_public_pem(jwk, "RS256")
+
+
 def test_rsa_jwk_missing_field_raises(rsa_keypair):
     public_key = serialization.load_pem_public_key(rsa_keypair.public_pem)
     jwk = _rsa_jwk(public_key)

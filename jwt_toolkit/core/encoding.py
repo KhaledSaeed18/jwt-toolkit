@@ -1,4 +1,6 @@
 import base64
+import json
+import math
 
 # base64url encode/decode helpers — JWT strips '=' padding by spec, so every
 # encode trims it and every decode restores it.
@@ -20,3 +22,24 @@ def base64_decode_padded(value: str) -> bytes:
     # Standard base64 (not url-safe) with the same padding restoration —
     # used by `crack` when interpreting a wordlist entry as a base64 secret.
     return base64.b64decode(_pad(value))
+
+
+class NonFiniteNumberError(ValueError):
+    pass
+
+
+def _reject_constant(name: str) -> float:
+    raise NonFiniteNumberError(name)
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise NonFiniteNumberError(text)
+    return value
+
+
+def strict_json_loads(raw: str | bytes) -> object:
+    # RFC 8259 has no NaN/Infinity; Python accepts them by default, and an
+    # exponent like 1e400 silently overflows to inf. Both defeat exp/nbf checks.
+    return json.loads(raw, parse_constant=_reject_constant, parse_float=_finite_float)

@@ -41,19 +41,24 @@ def ensure_hmac_algorithm(header: dict, *, action: str) -> str:
 
 def ensure_signing_algorithm(header: dict) -> str:
     # Validates that the token's alg is any signing algorithm we can verify
-    # (HMAC or asymmetric). Returns the canonical uppercase alg name.
-    alg = str(header.get("alg", "")).upper()
-    if alg == "NONE":
+    # (HMAC or asymmetric). alg is case-sensitive (RFC 7515 4.1.1), so only
+    # the exact registered spelling is accepted.
+    alg = header.get("alg")
+    if isinstance(alg, str) and alg.upper() == "NONE":
         raise UnsupportedAlgorithmError(
             title="Verification Error",
             headline="Token uses alg: none, it has no signature to verify",
             details=("This token is completely unsigned and trivially forgeable",),
         )
-    if alg not in ALL_SIGNING_ALGORITHMS:
+    if not isinstance(alg, str) or alg not in ALL_SIGNING_ALGORITHMS:
+        details = [f"Supported: {', '.join(sorted(ALL_SIGNING_ALGORITHMS))}"]
+        if isinstance(alg, str) and alg.upper() in ALL_SIGNING_ALGORITHMS:
+            details.append(f"alg is case-sensitive; {alg!r} is not {alg.upper()!r}")
+        shown = alg if isinstance(alg, str) else repr(alg)
         raise UnsupportedAlgorithmError(
             title="Verification Error",
-            headline=f"Unsupported algorithm: {alg}",
-            details=(f"Supported: {', '.join(sorted(ALL_SIGNING_ALGORITHMS))}",),
+            headline=f"Unsupported algorithm: {shown}",
+            details=tuple(details),
         )
     return alg
 

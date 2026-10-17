@@ -131,6 +131,19 @@ def test_malformed_token_exits_2(runner):
     assert result.exit_code == 2
 
 
+@pytest.mark.parametrize(
+    ("header", "payload"),
+    [([], {"sub": "1"}), ({"alg": "HS256"}, ["not", "an", "object"])],
+)
+def test_non_object_header_or_payload_exits_2_without_traceback(runner, header, payload):
+    h = base64url_encode(json.dumps(header).encode())
+    p = base64url_encode(json.dumps(payload).encode())
+    result = invoke(runner, f"{h}.{p}.sig", "--secret", "testsecret", "--json")
+    assert result.exit_code == 2
+    assert not isinstance(result.exception, AttributeError)
+    assert json.loads(result.output)["error"] == "invalid_json_object"
+
+
 # Asymmetric verification
 
 
@@ -335,3 +348,121 @@ def test_jwks_url_unreachable_exits_2(runner, keypair_for):
     )
     result = invoke(runner, token, "--jwks-url", "file:///nonexistent/jwks.json")
     assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("exp", [float("nan"), float("inf")])
+def test_non_finite_exp_is_never_valid(runner, exp):
+    t = make_token({"sub": "1", "exp": exp})
+    result = invoke(runner, t, "--secret", "testsecret", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "invalid_number"
+
+
+@pytest.mark.parametrize("claim", ["exp", "nbf"])
+@pytest.mark.parametrize("value", [True, False])
+def test_boolean_time_claim_fails(runner, claim, value):
+    t = make_token({"sub": "1", "exp": 9_999_999_999, claim: value})
+    result = invoke(runner, t, "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    check = next(c for c in json.loads(result.output)["checks"] if c["check"] == claim)
+    assert check["result"] == "FAIL"
+
+
+def test_token_is_expired_at_exactly_exp(runner, monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 1_700_000_000.0)
+    at_exp = make_token({"sub": "1", "exp": 1_700_000_000})
+    just_before = make_token({"sub": "1", "exp": 1_700_000_001})
+    assert invoke(runner, at_exp, "--secret", "testsecret").exit_code == 1
+    assert invoke(runner, just_before, "--secret", "testsecret").exit_code == 0
+
+
+def test_leeway_extends_exact_expiry_boundary(runner, monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 1_700_000_010.0)
+    t = make_token({"sub": "1", "exp": 1_700_000_000})
+    assert invoke(runner, t, "--secret", "testsecret", "--leeway", "10").exit_code == 1
+    assert invoke(runner, t, "--secret", "testsecret", "--leeway", "11").exit_code == 0
+
+
+def _crit_token(extra_header: dict) -> str:
+    return make_token(
+        {"sub": "1", "exp": 9_999_999_999},
+        header_override={"alg": "HS256", "typ": "JWT", **extra_header},
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"crit": ["custom"], "custom": True},
+        {"crit": ["exp"], "exp": 1},
+        {"crit": "custom", "custom": True},
+        {"crit": []},
+        {"crit": ["custom", "custom"], "custom": True},
+        {"crit": [1]},
+        {"crit": ["missing"]},
+    ],
+)
+def test_crit_header_is_rejected(runner, extra):
+    result = invoke(runner, _crit_token(extra), "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data["valid"] is False
+    assert any(c["check"] == "crit" and c["result"] == "FAIL" for c in data["checks"])
+
+
+@pytest.mark.parametrize("b64", [False, "false", None])
+def test_unencoded_payload_header_is_rejected(runner, b64):
+    result = invoke(runner, _crit_token({"b64": b64}), "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    assert any(c["check"] == "b64" for c in json.loads(result.output)["checks"])
+
+
+def test_b64_true_is_accepted(runner):
+    result = invoke(runner, _crit_token({"b64": True}), "--secret", "testsecret")
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("alg", ["hs256", "Hs256", "rs256"])
+def test_non_canonical_alg_case_exits_2(runner, alg):
+    t = make_token({"sub": "1", "exp": 9_999_999_999}, header_override={"alg": alg})
+    result = invoke(runner, t, "--secret", "testsecret")
+    assert result.exit_code == 2
+    assert "case-sensitive" in result.output
+
+
+@pytest.mark.parametrize("alg", [256, None, ["HS256"]])
+def test_non_string_alg_exits_2(runner, alg):
+    t = make_token({"sub": "1"}, header_override={"alg": alg})
+    result = invoke(runner, t, "--secret", "testsecret")
+    assert result.exit_code == 2
+    assert "Unsupported algorithm" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        ([], "invalid_key_options"),
+        (["--secret", "a", "--jwks-url", "file:///nonexistent"], "invalid_key_options"),
+    ],
+)
+def test_key_option_errors_are_json_under_json_flag(runner, valid_token, args, code):
+    result = invoke(runner, valid_token, *args, "--json")
+    assert result.exit_code == 2
+    data = json.loads(result.output)
+    assert data["error"] == code
+    assert data["schema_version"] == "0.1"
+
+
+def test_alg_none_is_json_under_json_flag(runner):
+    result = invoke(runner, make_unsigned_token({"sub": "1"}), "--secret", "x", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "unsupported_algorithm"
+
+
+def test_unparseable_public_key_is_json_under_json_flag(runner, tmp_path):
+    key = tmp_path / "bad.pem"
+    key.write_text("not a key")
+    t = make_rs256_token({"sub": "1"})
+    result = invoke(runner, t, "--public-key", str(key), "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "key_error"
