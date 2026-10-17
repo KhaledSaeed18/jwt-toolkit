@@ -1,8 +1,8 @@
 import os
-from importlib.metadata import PackageNotFoundError, version
 
 import click
 
+from jwt_toolkit import __version__
 from jwt_toolkit.cli.banner import render_banner, render_help
 from jwt_toolkit.commands.audit import audit
 from jwt_toolkit.commands.crack import crack
@@ -13,11 +13,6 @@ from jwt_toolkit.commands.forge import forge
 from jwt_toolkit.commands.generate_secret import generate_secret
 from jwt_toolkit.commands.sign import sign
 from jwt_toolkit.commands.verify import verify
-
-try:
-    __version__ = version("jwt-toolkit")
-except PackageNotFoundError:
-    __version__ = "0.0.0"
 
 CLI_HELP = """\
 JWT Toolkit — a command-line toolkit for inspecting, verifying, cracking,
