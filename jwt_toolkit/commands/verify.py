@@ -47,7 +47,10 @@ _IAT_FUTURE_LEEWAY_SECONDS = 60
     "public_key_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
-    help="Path to a PEM-encoded public key (RS*/PS*/ES*/Ed*). Mutually exclusive with --secret.",
+    help=(
+        "Path to a PEM public key or X.509 certificate (RS*/PS*/ES*/Ed*). "
+        "Mutually exclusive with --secret."
+    ),
 )
 @click.option(
     "--jwks-url",

@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import click
@@ -16,6 +17,7 @@ from jwt_toolkit.core.crypto import (
     sign_asymmetric as _sign_asymmetric,
 )
 from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_encode, strict_json_loads
+from jwt_toolkit.core.errors import KeyPassphraseRequiredError
 
 # Sign command — construct and mint a JWT from a header+payload and either an
 # HMAC secret or a PEM-encoded private key.
@@ -38,6 +40,16 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
     help="Path to a PEM-encoded private key (RS*/PS*/ES*/Ed*). Mutually exclusive with --secret.",
 )
 @click.option(
+    "--passphrase-file",
+    "passphrase_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help=(
+        "File holding the passphrase for an encrypted --private-key. "
+        "Without it, an encrypted key prompts on a terminal and fails otherwise."
+    ),
+)
+@click.option(
     "--alg",
     default="HS256",
     show_default=True,
@@ -51,9 +63,11 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
     help='Override the JWT header as a JSON string. Default: {"alg":"<alg>","typ":"JWT"}',
 )
 def sign(
+    *,
     payload_json: str,
     secret: str | None,
     private_key_path: Path | None,
+    passphrase_path: Path | None,
     alg: str,
     header_json: str | None,
 ):
@@ -81,6 +95,9 @@ def sign(
         raise SystemExit(2)
 
     _validate_key_inputs(sign_alg, secret=secret, private_key_path=private_key_path)
+    if passphrase_path is not None and private_key_path is None:
+        print_error("--passphrase-file only applies to --private-key", title="Invalid Input")
+        raise SystemExit(2)
 
     header_b64 = base64url_encode(json.dumps(header, separators=(",", ":")).encode())
     payload_b64 = base64url_encode(json.dumps(payload, separators=(",", ":")).encode())
@@ -88,9 +105,25 @@ def sign(
     if is_hmac(sign_alg):
         signature = _sign_hmac(header_b64, payload_b64, secret or "", sign_alg)
     else:
+        pem_bytes = private_key_path.read_bytes()  # type: ignore[union-attr]
+        passphrase = _read_passphrase(passphrase_path) if passphrase_path else None
         try:
-            pem_bytes = private_key_path.read_bytes()  # type: ignore[union-attr]
-            signature = _sign_asymmetric(header_b64, payload_b64, pem_bytes, sign_alg)
+            try:
+                signature = _sign_asymmetric(
+                    header_b64, payload_b64, pem_bytes, sign_alg, passphrase=passphrase
+                )
+            except KeyPassphraseRequiredError:
+                if not _is_interactive():
+                    print_error(
+                        "The private key is encrypted",
+                        "Pass --passphrase-file, or run in a terminal to be prompted.",
+                        title="Key Error",
+                    )
+                    raise SystemExit(2) from None
+                prompted = click.prompt("Private key passphrase", hide_input=True, err=True)
+                signature = _sign_asymmetric(
+                    header_b64, payload_b64, pem_bytes, sign_alg, passphrase=prompted.encode()
+                )
         except ValueError as exc:
             print_error(
                 "Could not sign with the provided private key",
@@ -100,6 +133,16 @@ def sign(
             raise SystemExit(2) from exc
 
     click.echo(f"{header_b64}.{payload_b64}.{signature}")
+
+
+def _read_passphrase(path: Path) -> bytes:
+    # Only the final line terminator is removed; other whitespace is part of it.
+    data = path.read_bytes()
+    return data.removesuffix(b"\n").removesuffix(b"\r")
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty() and sys.stderr.isatty()
 
 
 def _parse_json_arg(raw: str, *, label: str) -> dict:

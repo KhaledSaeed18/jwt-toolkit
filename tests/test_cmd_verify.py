@@ -9,7 +9,12 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from jwt_toolkit.cli import cli
 from jwt_toolkit.core.crypto import sign_asymmetric
 from jwt_toolkit.core.encoding import base64url_encode
-from tests.helpers import make_rs256_token, make_token, make_unsigned_token
+from tests.helpers import (
+    make_rs256_token,
+    make_token,
+    make_unsigned_token,
+    self_signed_cert_pem,
+)
 
 
 def _asymmetric_token(payload: dict, alg: str, private_pem: bytes) -> str:
@@ -466,3 +471,13 @@ def test_unparseable_public_key_is_json_under_json_flag(runner, tmp_path):
     result = invoke(runner, t, "--public-key", str(key), "--json")
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "key_error"
+
+
+def test_verify_accepts_certificate_as_public_key(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    cert = tmp_path / "cert.pem"
+    cert.write_bytes(self_signed_cert_pem(kp.private_pem))
+    t = _asymmetric_token({"sub": "1", "exp": 9_999_999_999}, "RS256", kp.private_pem)
+    result = invoke(runner, t, "--public-key", str(cert), "--json")
+    assert result.exit_code == 0
+    assert json.loads(result.output)["valid"] is True
