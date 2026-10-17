@@ -138,6 +138,8 @@ Output:
 ╰───────────────────────────────────────────────╯
 ```
 
+When the payload has `iat`, `nbf`, or `exp`, a Time Claims table between the payload and signature shows each value in UTC and relative to now, for example `2023-11-14 22:13:20 UTC` and `in 14m 59s` or `3d 2h ago`. Values that are not numbers are flagged instead. `--json` output keeps the raw numbers only.
+
 ### Audit a token
 
 Input:
