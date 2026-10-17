@@ -109,6 +109,13 @@ Output:
 eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcwMDAwMDAwMH0.cPIGduvFlZtf6Xa3HFDkf8sV7v_8O5fn7_vW7-D1_0c
 ```
 
+For test fixtures, read the payload from a file (or `-` for stdin) and give the token a lifetime. `--expires-in` sets `iat` to now and `exp` to now plus the duration, and refuses to overwrite an `iat` or `exp` already in the payload:
+
+```bash
+jwt-toolkit sign --payload-file fixture.json --private-key test-private.pem \
+  --alg RS256 --expires-in 15m
+```
+
 ### Decode a token
 
 Input:
