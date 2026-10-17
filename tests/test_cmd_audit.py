@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt_toolkit.cli import cli
 from jwt_toolkit.core.crypto import sign_asymmetric
 from jwt_toolkit.core.encoding import base64url_encode
-from tests.helpers import make_token, make_unsigned_token
+from tests.helpers import TEST_SECRET, make_token, make_unsigned_token
 
 
 def invoke(runner, *args):
@@ -158,6 +158,23 @@ def test_audit_conflicting_keys_is_json_under_json_flag(runner, tmp_path, keypai
     pem.write_bytes(keypair_for("RS256").public_pem)
     result = runner.invoke(
         cli, ["audit", valid_token, "--secret", "s", "--public-key", str(pem), "--json"]
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "invalid_key_options"
+
+
+def test_secret_file_adds_signature_check(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text(TEST_SECRET + "\n")
+    result = invoke(runner, make_token({"sub": "1"}), "--secret-file", str(path), "--json")
+    assert json.loads(result.output)["signature_valid"] is True
+
+
+def test_secret_file_conflict_with_secret(runner, tmp_path):
+    path = tmp_path / "secret"
+    path.write_text(TEST_SECRET)
+    result = invoke(
+        runner, make_token({"sub": "1"}), "--secret", "x", "--secret-file", str(path), "--json"
     )
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "invalid_key_options"
