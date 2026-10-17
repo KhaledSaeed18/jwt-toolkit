@@ -55,13 +55,23 @@ def _strength_for(bits: int) -> str:
     type=click.Choice(["hex", "base64"]),
     default="hex",
     show_default=True,
-    help="Output encoding",
+    help="Output encoding (base64 is URL-safe with padding)",
 )
-def generate_secret(bits: int, encoding: str):
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Print only the secret and a newline, for scripts and files.",
+)
+def generate_secret(bits: int, encoding: str, raw: bool):
     _validate_bits(bits)
 
-    raw = secrets.token_bytes(bits // 8)
-    output = raw.hex() if encoding == "hex" else base64.urlsafe_b64encode(raw).decode()
+    secret = secrets.token_bytes(bits // 8)
+    output = secret.hex() if encoding == "hex" else base64.urlsafe_b64encode(secret).decode()
+
+    # --raw bypasses the Rich console so --quiet and --no-color cannot hide or style it.
+    if raw:
+        click.echo(output)
+        return
 
     print_success(
         output,
