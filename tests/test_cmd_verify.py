@@ -537,3 +537,23 @@ def test_non_ascii_signature_fails_verification_without_crashing(runner, valid_t
     result = invoke(runner, f"{header}.{payload}.abcé", "--secret", "testsecret", "--json")
     assert result.exit_code == 1
     assert json.loads(result.stdout)["valid"] is False
+
+
+def test_plain_http_jwks_adds_a_warning(runner, monkeypatch):
+    monkeypatch.setattr(
+        "jwt_toolkit.commands.verify._verify_signature", lambda *args, **kwargs: True
+    )
+    token = make_rs256_token({"sub": "1", "exp": 9_999_999_999})
+    result = invoke(runner, token, "--jwks-url", "http://keys.example/jwks.json", "--json")
+    document = json.loads(result.stdout)
+    assert document["valid"] is True
+    jwks = next(c for c in document["checks"] if c["check"] == "jwks")
+    assert jwks["result"] == "WARN"
+
+
+def test_https_and_file_jwks_add_no_transport_warning(runner, tmp_path, keypair_for):
+    kp = keypair_for("RS256")
+    url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem)]})
+    token = _asymmetric_token({"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem)
+    document = json.loads(invoke(runner, token, "--jwks-url", url, "--json").stdout)
+    assert not [c for c in document["checks"] if c["check"] == "jwks"]

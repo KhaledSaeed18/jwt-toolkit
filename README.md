@@ -194,7 +194,7 @@ jwt-toolkit verify <token> --jwks-url https://auth.example.com/.well-known/jwks.
 | --- | --- |
 | `--secret`, `--secret-file` | HMAC secret for `HS*` tokens. |
 | `--public-key FILE` | PEM public key or X.509 certificate for `RS*`, `PS*`, `ES*`, and `Ed*` tokens. |
-| `--jwks-url URL` | JWKS endpoint (`https://`, `http://`, or `file://`). The token's `kid` selects the key, and its `kty`, `crv`, and `alg` must match the token. A key marked `use: enc`, or whose `key_ops` lacks `verify`, is refused. |
+| `--jwks-url URL` | JWKS endpoint (`https://`, `http://`, or `file://`). The token's `kid` selects the key, and its `kty`, `crv`, and `alg` must match the token. A key marked `use: enc`, or whose `key_ops` lacks `verify`, is refused. An `http://` URL adds a WARN check, since the key could be swapped in transit. |
 | `--issuer`, `--audience` | Expected `iss` and `aud`. `aud` may be a string or a list. |
 | `--leeway SECONDS` | Clock-skew tolerance for `exp` and `nbf`. |
 | `--json` | Print `{schema_version, valid, checks[]}`. |

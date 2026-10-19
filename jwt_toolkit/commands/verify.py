@@ -1,6 +1,7 @@
 import json
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 from rich.markup import escape
@@ -138,6 +139,7 @@ def verify(
 
     checks = [
         signature_check,
+        *_transport_checks(jwks_url),
         *check_critical_headers(decoded.header),
         *check_time_claims(decoded.payload, now=time.time(), leeway=leeway),
     ]
@@ -181,6 +183,21 @@ def _require_one_key_source(
         as_json=as_json,
     )
     raise SystemExit(2)
+
+
+def _transport_checks(jwks_url: str | None) -> list[Check]:
+    # Plain HTTP stays allowed for compatibility, but the verdict must say the
+    # key itself was exposed to tampering in transit.
+    if jwks_url is None or urlparse(jwks_url).scheme != "http":
+        return []
+    return [
+        Check(
+            "WARN",
+            "jwks",
+            "Keys were fetched over plain HTTP, so anyone on the network path could "
+            "substitute them; use an https:// JWKS URL",
+        )
+    ]
 
 
 def _pin_algorithm(header: JsonObject, *, uses_secret: bool) -> tuple[str | None, str | None]:
