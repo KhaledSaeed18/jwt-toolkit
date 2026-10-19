@@ -101,7 +101,7 @@ filterwarnings = [
 ]
 markers = [
     "slow: long-running tests (deselect with -m 'not slow')",
-    "integration: tests that touch real crypto / filesystem / network",
+    "integration: tests that touch real crypto or the filesystem (never the network)",
 ]
 
 [tool.coverage.run]

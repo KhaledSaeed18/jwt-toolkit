@@ -46,28 +46,37 @@ jwt-toolkit/
 │   ├── __init__.py           # Package version
 │   ├── cli/                  # CLI plumbing: banner, console, panels, decoding helpers
 │   │   ├── __init__.py       # Click root group, global flags, command registration
-│   │   ├── algorithms.py     # CLI-side algorithm validation and listing
-│   │   ├── banner.py         # Startup banner and custom help renderer
-│   │   ├── console.py        # Rich console wiring (quiet, no-color, JSON modes)
-│   │   ├── decoding.py       # Shared CLI helpers for decoding input
-│   │   └── panels.py         # Reusable Rich panels (header, payload, verdicts, findings)
+│   │   ├── algorithms.py     # CLI-side algorithm validation
+│   │   ├── banner.py         # Startup banner, help screen, and the COMMANDS/EXAMPLES lists
+│   │   ├── console.py        # Result, error, and status consoles (quiet, no-color)
+│   │   ├── credentials.py    # --secret / --secret-file handling
+│   │   ├── decoding.py       # Token input (argument, @file, stdin) and error envelopes
+│   │   ├── panels.py         # Reusable Rich panels for errors and results
+│   │   └── wordlists.py      # Location of the bundled wordlist
 │   ├── commands/             # One file per `jwt-toolkit <command>`
 │   │   ├── audit.py
 │   │   ├── crack.py
 │   │   ├── decode.py
+│   │   ├── diff.py
 │   │   ├── download_wordlists.py
 │   │   ├── forge.py
 │   │   ├── generate_secret.py
 │   │   ├── sign.py
 │   │   └── verify.py
 │   └── core/                 # Pure logic, no Click and no Rich
-│       ├── auditor.py        # Static audit rules and verdict scoring
+│       ├── auditor.py        # Static audit rules, key-material checks, and grading
+│       ├── claims.py         # Claim and critical-header checks used by verify
+│       ├── cracker.py        # Batched, optionally parallel HMAC secret search
 │       ├── crypto.py         # HMAC and asymmetric signing and verification
-│       ├── decoder.py        # JWT parsing and base64url helpers
-│       ├── encoding.py       # base64url, JSON canonicalization
-│       ├── errors.py         # Domain-specific exceptions
+│       ├── decoder.py        # JWT splitting and decoding
+│       ├── diff.py           # Field-by-field token comparison
+│       ├── encoding.py       # base64url and strict JSON helpers
+│       ├── errors.py         # Domain-specific exceptions with stable codes
 │       ├── forge.py          # Defensive attack-shaped variant generation
-│       └── jwks.py           # JWKS fetching, caching, and key selection
+│       ├── jwks.py           # JWKS fetching and key selection
+│       ├── lifetime.py       # --expires-in parsing
+│       ├── timestamps.py     # Human-readable time claims
+│       └── wordlist.py       # Streaming wordlist reader and candidate expansion
 ├── tests/                    # Pytest suite mirroring the source layout
 │   ├── conftest.py           # Shared fixtures (keys, tokens, tmp wordlists)
 │   ├── helpers.py            # Test helpers
@@ -189,8 +198,8 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/). The form
 
 `<scope>` is a short identifier for the area of the codebase. Use a command name, a `core/` module name, or a high-level area:
 
-- Command scopes: `audit`, `crack`, `decode`, `verify`, `sign`, `forge`, `generate-secret`, `download-wordlists`
-- Core scopes: `core`, `auditor`, `crypto`, `decoder`, `forge`, `jwks`, `jwks-cache`
+- Command scopes: `audit`, `crack`, `decode`, `diff`, `verify`, `sign`, `forge`, `generate-secret`, `download-wordlists`
+- Core scopes: `core`, `auditor`, `claims`, `cracker`, `crypto`, `decoder`, `forge`, `jwks`, `wordlist`
 - Other scopes: `cli`, `readme`, `ci`, `deps`, `release`
 
 Rules:

@@ -52,7 +52,7 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     "--json",
     "as_json",
     is_flag=True,
-    help="Emit a machine-readable report. Schema is experimental.",
+    help="Emit a machine-readable JSON report.",
 )
 @click.option(
     "--secret",

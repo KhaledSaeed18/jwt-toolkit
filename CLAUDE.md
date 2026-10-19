@@ -54,16 +54,17 @@ Three things are observable by downstream users and break things when you change
 2. **`--json` output shape.** Every command that supports `--json` includes `schema_version` (currently `"0.1"`, defined in `jwt_toolkit/cli/decoding.py`). **If you change a field name, type, or remove a field, bump `JSON_SCHEMA_VERSION`** and call it out in the PR. Adding new optional fields is non-breaking.
 3. **Stable error codes** — `core/errors.py` exceptions carry a machine-readable `code`. `--json` consumers key off these. Codes are forever; pick a new one rather than reusing or renaming an existing one.
 
-Exit codes follow Click defaults: `0` = success, `1` = command-handled failure (`click.ClickException`), `2` = usage error (Click's own). Don't `sys.exit(N)` directly; raise `click.ClickException` so the message is rendered through the project's console.
+Exit codes are documented in the README and are part of the CLI contract: `0` = the check passed, `1` = it found a problem (invalid signature, grade F, secret cracked), `2` = the input, key, or options could not be used (Click's usage errors are also `2`). Render the failure with `emit_error` / `print_error`, then `raise SystemExit(code)`; never call `sys.exit()` from `core/`.
 
 ## CLI conventions
 
-- **Never `print()`.** Use `from jwt_toolkit.cli.console import console` (and `click.echo` for `--json` payloads). `print()` bypasses `--quiet`, `--no-color`, and the `JWT_TOOLKIT_QUIET=1` / `NO_COLOR=1` env vars.
+- **Never `print()`.** Use the consoles in `jwt_toolkit/cli/console.py`: `console` for results (stdout, never muted), `err_console` (via `print_error`) for errors (stderr, never muted), and `status_console` for progress, hints, and context lines (stderr, muted by `--quiet`). Use `click.echo` for `--json` payloads. `print()` bypasses `--quiet`, `--no-color`, and the `JWT_TOOLKIT_QUIET=1` / `NO_COLOR=1` env vars.
+- `--quiet` drops only non-essential output. A command's result and its errors must still print under `--quiet`.
 - Global flags `--no-banner`, `--quiet`, `--no-color` exist for scripting. Any new command must respect them.
 - Secrets and keys: accept them as `--secret` / `--private-key`. **Never accept secrets as positional arguments** (they show up in shell history and `ps`). Don't echo their values in errors — refer to them by flag name only.
 - Errors are `raise click.ClickException("user-facing sentence")` from the command layer; deeper layers raise domain exceptions from `core/errors.py`. The CLI translates the latter into the former.
 - Match the help-text voice of existing commands: one short security-outcome sentence, no implementation detail.
-- When registering a new command, add it to the `Commands:` block in `jwt_toolkit/cli/__init__.py`'s `CLI_HELP` with the **same column alignment** as the existing entries.
+- When registering a new command, add it to `COMMANDS` (and an example to `EXAMPLES`) in `jwt_toolkit/cli/banner.py`. Both the plain `--help` text (`CLI_HELP`) and the banner help screen are built from those lists.
 
 ## Code style
 

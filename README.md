@@ -37,12 +37,12 @@ The JWS logic is implemented in the open on top of [`cryptography`](https://cryp
 | | |
 | --- | --- |
 | **Decode** | Pretty-print the header, payload, and signature, with `iat`/`nbf`/`exp` shown in UTC and relative to now. |
-| **Audit** | Static analysis with no key required. Flags `alg: none`, weak HMAC use, embedded `jwk`, `jku`/`x5u` over HTTP, `kid` injection shapes, `crit` misuse, missing or excessive lifetimes, and PII in the payload, with CVE references and an A to F grade. |
+| **Audit** | Static analysis with no key required. Flags `alg: none`, stripped signatures, weak HMAC use, embedded `jwk`, `jku`/`x5u` over HTTP, `kid` injection shapes, `crit` misuse, missing or excessive lifetimes, and PII in the payload, with CVE references and an A to F grade. Given the key, it also flags guessable secrets and RSA keys under 2048 bits. |
 | **Verify** | Signature plus `exp`, `nbf`, `iat`, `iss`, and `aud` checks against an HMAC secret, a PEM key, an X.509 certificate, or a JWKS endpoint. |
 | **Diff** | Compare two tokens field by field, with JSON Pointer paths and identity, permission, and lifetime fields highlighted. |
 | **Sign** | Mint test tokens with HMAC, RSA, RSA-PSS, ECDSA, or EdDSA keys, including encrypted private keys, payload files, and lifetimes such as `--expires-in 15m`. |
 | **Forge** | Generate attack-shaped variants of a token (`alg: none`, algorithm confusion, tampered payloads) to check that your verifier rejects them. |
-| **Crack** | Test an HMAC secret against a wordlist across worker processes. A curated list ships with the package. |
+| **Crack** | Test an HMAC secret against a wordlist across worker processes, with `--json` for CI. A curated list ships with the package. |
 | **Generate** | Produce cryptographically strong secrets, raw for scripts or formatted for humans. |
 
 ## Installation
@@ -139,7 +139,7 @@ jwt-toolkit audit <token> --strict --require iss,aud --json
 ┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ Severity   ┃ Field          ┃ Detail                ┃ Recommendation         ┃
 ┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ WARN       │ alg            │ HS256 is symmetric —  │ Use a                  │
+│ WARN       │ alg            │ HS256 is symmetric:   │ Use a                  │
 │            │                │ the shared secret     │ cryptographically      │
 │            │                │ must be strong or it  │ strong secret          │
 │            │                │ can be brute-forced   │ (jwt-toolkit           │
@@ -147,7 +147,7 @@ jwt-toolkit audit <token> --strict --require iss,aud --json
 │            │                │                       │ migrate to an          │
 │            │                │                       │ asymmetric algorithm.  │
 ├────────────┼────────────────┼───────────────────────┼────────────────────────┤
-│ WARN       │ exp            │ No exp claim — token  │ Always set exp;        │
+│ WARN       │ exp            │ No exp claim: token   │ Always set exp;        │
 │            │                │ never expires         │ short-lived tokens     │
 │            │                │                       │ limit blast radius if  │
 │            │                │                       │ leaked.                │
@@ -158,8 +158,8 @@ jwt-toolkit audit <token> --strict --require iss,aud --json
 | --- | --- |
 | `--strict` | Treat WARN findings as failures (exit 1). |
 | `--require CLAIMS` | Comma-separated claims that must be present, such as `iss,aud,sub`. Each missing one is a WARN finding. |
-| `--secret`, `--secret-file` | Also verify an HMAC signature. |
-| `--public-key FILE` | Also verify an asymmetric signature with a PEM key or X.509 certificate. |
+| `--secret`, `--secret-file` | Also verify an HMAC signature. When the secret verifies the token, it is also checked against the bundled common-secrets list and the RFC 7518 minimum length. |
+| `--public-key FILE` | Also verify an asymmetric signature with a PEM key or X.509 certificate, and check the RSA key size. |
 | `--json` | Print the full report, including every finding and its recommendation. |
 
 **What it checks**
@@ -167,10 +167,12 @@ jwt-toolkit audit <token> --strict --require iss,aud --json
 | Area | Findings |
 | --- | --- |
 | Algorithm | `alg: none` in any casing (CRITICAL, CVE-2015-2951); non-registered spellings such as `hs256`; symmetric algorithms that depend on secret strength; unknown or missing `alg`; the deprecated `EdDSA` name. |
-| Key smuggling | `jwk` embedded in the header (CRITICAL, CVE-2018-0114); `jku` or `x5u` over plain HTTP (CRITICAL) or pointing at external keys (WARN); HMAC combined with key-bearing headers, the HS/RS confusion shape (CRITICAL, CVE-2016-10555). |
+| Signature | A signed `alg` with the signature removed, the stripped-signature shape (CRITICAL). |
+| Key smuggling | `jwk` embedded in the header (CRITICAL, CVE-2018-0114); `jku` or `x5u` over plain HTTP (CRITICAL) or pointing at external keys (WARN); an `x5c` certificate chain that a verifier must validate against a pinned root (WARN); HMAC combined with key-bearing headers, the HS/RS confusion shape (CRITICAL, CVE-2016-10555). |
 | Header parameters | `kid` containing path traversal, SQL, or command injection sequences; non-string `kid`; `crit` that is malformed or lists missing parameters; non-boolean `b64`; unexpected `typ`. |
 | Lifetime | Missing `exp`; expired tokens; `nbf` in the future; `iat` in the future or implausible; very long lifetimes; non-numeric time claims. |
-| Claims | Missing `iss`, `aud`, `iat`, or `jti` (INFO), and any claim named in `--require` (WARN). |
+| Claims | Missing `iss`, `aud`, `iat`, or `jti` (INFO), and any claim named in `--require` (WARN); `iss` or `sub` that is not a string, and `aud` that is not a string or list of strings (WARN). |
+| Key material | With `--secret`: a secret in the bundled common-secrets list (CRITICAL) or shorter than the hash output, which RFC 7518 3.2 requires (WARN). With `--public-key`: an RSA key under 2048 bits (CRITICAL, NIST SP 800-131A). Findings never include the secret. |
 | Payload contents | Sensitive field names such as `password` or `secret`; email addresses; Luhn-valid card numbers anywhere in nested data. |
 
 **Grades**: any CRITICAL finding gives **F**, three or more WARN give **C**, one or two WARN give **B**, otherwise **A**.
@@ -192,12 +194,12 @@ jwt-toolkit verify <token> --jwks-url https://auth.example.com/.well-known/jwks.
 | --- | --- |
 | `--secret`, `--secret-file` | HMAC secret for `HS*` tokens. |
 | `--public-key FILE` | PEM public key or X.509 certificate for `RS*`, `PS*`, `ES*`, and `Ed*` tokens. |
-| `--jwks-url URL` | JWKS endpoint (`https://`, `http://`, or `file://`). The token's `kid` selects the key, and its `kty`, `crv`, and `alg` must match the token. |
+| `--jwks-url URL` | JWKS endpoint (`https://`, `http://`, or `file://`). The token's `kid` selects the key, and its `kty`, `crv`, and `alg` must match the token. A key marked `use: enc`, or whose `key_ops` lacks `verify`, is refused. |
 | `--issuer`, `--audience` | Expected `iss` and `aud`. `aud` may be a string or a list. |
 | `--leeway SECONDS` | Clock-skew tolerance for `exp` and `nbf`. |
 | `--json` | Print `{schema_version, valid, checks[]}`. |
 
-Checks performed: signature; `crit` (rejected, since no extensions are supported); `exp` (a token is expired at its `exp` second); `nbf`; `iat` not in the future; and `iss`/`aud` when requested. Time claims must be finite numbers.
+Checks performed: signature; `crit` (rejected, since no extensions are supported); `exp` (a token is expired at its `exp` second); `nbf`; `iat` not in the future; and `iss`/`aud` when requested. Time claims must be finite numbers. A missing `iss` or `aud` fails the check by name.
 
 **Exit codes**: `0` valid, `1` invalid, `2` unusable input, key, or options.
 
@@ -245,8 +247,8 @@ Mints a token for tests and fixtures. The header always declares the algorithm t
 
 ```bash
 jwt-toolkit sign --payload '{"sub":"1"}' --secret-file hs256.secret
-jwt-toolkit sign --payload-file fixture.json --private-key private.pem --alg RS256 --expires-in 15m
-echo '{"sub":"1"}' | jwt-toolkit sign --payload-file - --private-key ed25519.pem --alg Ed25519
+jwt-toolkit sign --payload-file fixture.json --private-key private.pem --expires-in 15m
+echo '{"sub":"1"}' | jwt-toolkit sign --payload-file - --private-key rsa.pem --alg PS256
 ```
 
 | Option | Description |
@@ -256,7 +258,7 @@ echo '{"sub":"1"}' | jwt-toolkit sign --payload-file - --private-key ed25519.pem
 | `--secret`, `--secret-file` | HMAC secret for `HS*`. |
 | `--private-key FILE` | PEM private key (PKCS#8 or traditional) for `RS*`, `PS*`, `ES*`, and `Ed*`. |
 | `--passphrase-file FILE` | Passphrase for an encrypted private key. Without it, you are prompted on a terminal; non-interactive runs fail instead of hanging. |
-| `--alg ALG` | Signing algorithm, `HS256` by default. |
+| `--alg ALG` | Signing algorithm. Defaults to `HS256` with a secret. With `--private-key` and no `--alg`, it follows the key: `RS256` for RSA, `ES256`/`ES384`/`ES512` by curve, and `Ed25519` or `Ed448`. |
 | `--header JSON` | Replace the default `{"alg": ..., "typ": "JWT"}` header. |
 
 The token is printed on its own line, so `$(jwt-toolkit sign ...)` captures it cleanly.
@@ -291,6 +293,7 @@ Tries every line of a wordlist as the HMAC secret. Use it on your own tokens to 
 jwt-toolkit crack <token>                              # bundled common-secrets list
 jwt-toolkit crack <token> rockyou.txt --workers 8
 jwt-toolkit crack <token> keys.txt --encoding all --output found.txt
+jwt-toolkit crack <token> --json                       # for CI
 ```
 
 ```
@@ -301,9 +304,9 @@ jwt-toolkit crack <token> keys.txt --encoding all --output found.txt
 │ Position         : #107 of ~313 candidates                                   │
 │ Candidates tried : 107                                                       │
 │ Time elapsed     : 0.001s                                                    │
-│ Average rate     : 107.7k c/s                                                │
+│ Average rate     : 128.8k c/s                                                │
 │                                                                              │
-│ This secret is in a common wordlist — it is not safe.                        │
+│ This secret is in the wordlist, so it is not safe.                           │
 │ Generate a strong secret with: jwt-toolkit generate-secret                   │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
@@ -313,7 +316,8 @@ jwt-toolkit crack <token> keys.txt --encoding all --output found.txt
 | `WORDLIST` | Path to a wordlist. Without it, the curated list bundled with the package is used. |
 | `--workers N` | Worker processes, 1 to 64, default 4. Lists under 50,000 candidates run in one process. `--threads` is accepted as an alias. |
 | `--encoding` | Treat each line as `utf-8` text, `hex`, `base64`, or try `all` three. |
-| `--output FILE` | Write a found secret to a file. |
+| `--output FILE` | Write a found secret to a file, exactly as the wordlist line holds it. The file is readable by its owner only (mode 0600). |
+| `--json` | Print `{schema_version, found, algorithm, wordlist, encoding, candidates_tried, elapsed_seconds}`; a match adds `secret`, `secret_encoding`, `position`, and `saved_to`. |
 
 Wordlists are streamed, so multi-gigabyte lists are fine. Each line is tried exactly as written: only the line ending and a leading byte-order mark are removed, so secrets with spaces or a leading `#` are found.
 
@@ -343,7 +347,7 @@ Saves the curated wordlist as a file, for use with other tools or as a starting 
 jwt-toolkit download-wordlists --output-dir wordlists
 ```
 
-The file is fetched over verified TLS from this release's git tag and checked against a pinned SHA-256 before it is kept. `--source URL` downloads from somewhere else without the hash check, and `--force` overwrites an existing file.
+The file is fetched over verified TLS from this release's git tag and checked against a pinned SHA-256 before it is kept. It is downloaded to a temporary file first, so a failed or tampered download never replaces an existing copy. `--source URL` (`https://`, `http://`, or `file://`) downloads from somewhere else without the hash check, and `--force` overwrites an existing file.
 
 ## Passing tokens, keys, and secrets
 
@@ -355,13 +359,13 @@ The file is fetched over verified TLS from this release's git tag and checked ag
 | `@path/to/token.jwt` | Read the token from a file. |
 | `-` | Read the token from stdin. |
 
-Surrounding whitespace and line breaks are ignored.
+Surrounding whitespace and line breaks are ignored, and a leading `Bearer ` is dropped, so a value copied from an `Authorization` header works as-is.
 
 **HMAC secrets.** `--secret VALUE` is convenient but ends up in shell history and is visible to other users in process listings. Prefer `--secret-file FILE`: the file is read as UTF-8 text, and only a byte-order mark and one trailing newline are removed, so the output of `generate-secret --raw` works unchanged.
 
 **Asymmetric keys.** Private keys are PEM files in PKCS#8 or traditional format. Encrypted keys are supported through `--passphrase-file` or an interactive prompt. Public keys may be PEM `SubjectPublicKeyInfo` keys or X.509 certificates.
 
-**JWKS.** `verify --jwks-url` fetches a key set over HTTPS (or reads a `file://` path), selects the key by the token's `kid`, and requires the key type, curve, and any `alg` on the key to match the token.
+**JWKS.** `verify --jwks-url` fetches a key set over HTTPS (or reads a `file://` path), selects the key by the token's `kid`, and requires the key type, curve, and any `alg` on the key to match the token. Responses over 1 MiB and redirects from `https` to `http` are refused.
 
 ## Supported algorithms
 
@@ -385,11 +389,13 @@ jwt-toolkit --quiet --no-color audit "$TOKEN" --json
 
 | Option | Environment variable | Effect |
 | --- | --- | --- |
-| `--quiet` | `JWT_TOOLKIT_QUIET=1` | Suppress the banner and non-essential output. |
+| `--quiet` | `JWT_TOOLKIT_QUIET=1` | Drop the banner, progress, and hints. Results and errors are always printed. |
 | `--no-color` | `NO_COLOR=1` | Disable colors. |
 | `--no-banner` | `JWT_TOOLKIT_NO_BANNER=1` | Suppress the banner shown by a bare `jwt-toolkit`. |
 
-**JSON output.** `decode`, `audit`, `verify`, `diff`, and `forge` accept `--json`. Every document carries `"schema_version": "0.1"`; a field will not be renamed or removed without a new schema version. Errors use the same envelope with a stable code:
+**Output streams.** Results go to stdout; errors, progress, and hints go to stderr, so `jwt-toolkit sign ... > token.jwt` captures only the token. Under `--json`, error documents are printed to stdout like any other result.
+
+**JSON output.** `decode`, `audit`, `verify`, `diff`, `forge`, and `crack` accept `--json`. Every document carries `"schema_version": "0.1"`; a field will not be renamed or removed without a new schema version. Errors use the same envelope with a stable code:
 
 ```json
 {
@@ -400,7 +406,7 @@ jwt-toolkit --quiet --no-color audit "$TOKEN" --json
 }
 ```
 
-Error codes include `invalid_structure`, `invalid_base64url`, `invalid_json`, `invalid_json_object`, `invalid_number`, `token_unreadable`, `unsupported_algorithm`, `invalid_key_options`, `key_error`, and `stdin_conflict`.
+Error codes include `invalid_structure`, `invalid_base64url`, `invalid_json`, `invalid_json_object`, `invalid_number`, `token_unreadable`, `unsupported_algorithm`, `invalid_key_options`, `key_error`, `stdin_conflict`, `signature_missing`, `wordlist_missing`, `wordlist_unreadable`, and `wordlist_empty`.
 
 **Exit codes.** `0` means the check passed, `1` means it found a problem, and `2` means the input could not be used. The exceptions are [`crack`](#crack), which exits `1` when it finds the secret, and [`diff`](#diff), which only exits `1` with `--exit-code`.
 
