@@ -46,16 +46,24 @@ def test_wrong_secret_exits_1(runner, valid_token):
 # Algorithm rejection
 
 
-def test_alg_none_exits_2(runner):
+def _signature_failure(result) -> str:
+    document = json.loads(result.stdout)
+    assert document["valid"] is False
+    return next(c["detail"] for c in document["checks"] if c["check"] == "signature")
+
+
+def test_alg_none_is_rejected_as_invalid(runner):
     t = make_unsigned_token({"sub": "1"})
-    result = invoke(runner, t, "--secret", "any")
-    assert result.exit_code == 2
+    result = invoke(runner, t, "--secret", "any", "--json")
+    assert result.exit_code == 1
+    assert "alg: none" in _signature_failure(result)
 
 
-def test_rs256_exits_2(runner):
+def test_rs256_token_with_secret_is_rejected_as_invalid(runner):
     t = make_rs256_token({"sub": "1"})
-    result = invoke(runner, t, "--secret", "any")
-    assert result.exit_code == 2
+    result = invoke(runner, t, "--secret", "any", "--json")
+    assert result.exit_code == 1
+    assert "HMAC secret was supplied" in _signature_failure(result)
 
 
 # Temporal claim checks
@@ -180,20 +188,22 @@ def test_asymmetric_wrong_public_key_exits_1(runner, tmp_path, keypair_for):
     assert result.exit_code == 1
 
 
-def test_asymmetric_alg_with_secret_exits_2(runner, tmp_path, keypair_for):
+def test_asymmetric_alg_with_secret_is_invalid(runner, tmp_path, keypair_for):
     kp = keypair_for("RS256")
     token = _asymmetric_token({"sub": "1", "exp": 9999999999}, "RS256", kp.private_pem)
     result = invoke(runner, token, "--secret", "anything")
-    assert result.exit_code == 2
+    assert result.exit_code == 1
 
 
-def test_hmac_alg_with_public_key_exits_2(runner, tmp_path, keypair_for, valid_token):
+def test_hmac_alg_with_public_key_is_algorithm_confusion(
+    runner, tmp_path, keypair_for, valid_token
+):
     kp = keypair_for("RS256")
     pub = tmp_path / "pub.pem"
     pub.write_bytes(kp.public_pem)
-    # HS256 token but --public-key supplied.
-    result = invoke(runner, valid_token, "--public-key", str(pub))
-    assert result.exit_code == 2
+    result = invoke(runner, valid_token, "--public-key", str(pub), "--json")
+    assert result.exit_code == 1
+    assert "CVE-2016-10555" in _signature_failure(result)
 
 
 def test_asymmetric_token_without_any_key_exits_2(runner, keypair_for):
@@ -318,11 +328,11 @@ def test_jwks_url_with_signed_by_other_key_exits_1(runner, tmp_path, keypair_for
     assert result.exit_code == 1
 
 
-def test_jwks_url_for_hmac_token_exits_2(runner, tmp_path, keypair_for, valid_token):
+def test_jwks_url_for_hmac_token_is_invalid(runner, tmp_path, keypair_for, valid_token):
     kp = keypair_for("RS256")
     url = _write_jwks_file(tmp_path, {"keys": [_rsa_jwk_for(kp.public_pem)]})
     result = invoke(runner, valid_token, "--jwks-url", url)
-    assert result.exit_code == 2
+    assert result.exit_code == 1
 
 
 def test_jwks_url_mutually_exclusive_with_secret(runner, tmp_path, keypair_for):
@@ -429,19 +439,19 @@ def test_b64_true_is_accepted(runner):
 
 
 @pytest.mark.parametrize("alg", ["hs256", "Hs256", "rs256"])
-def test_non_canonical_alg_case_exits_2(runner, alg):
+def test_non_canonical_alg_case_is_invalid(runner, alg):
     t = make_token({"sub": "1", "exp": 9_999_999_999}, header_override={"alg": alg})
-    result = invoke(runner, t, "--secret", "testsecret")
-    assert result.exit_code == 2
-    assert "case-sensitive" in result.output
+    result = invoke(runner, t, "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    assert "case-sensitive" in _signature_failure(result)
 
 
 @pytest.mark.parametrize("alg", [256, None, ["HS256"]])
-def test_non_string_alg_exits_2(runner, alg):
+def test_non_string_alg_is_invalid(runner, alg):
     t = make_token({"sub": "1"}, header_override={"alg": alg})
-    result = invoke(runner, t, "--secret", "testsecret")
-    assert result.exit_code == 2
-    assert "Unsupported algorithm" in result.output
+    result = invoke(runner, t, "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    assert "Unsupported algorithm" in _signature_failure(result)
 
 
 @pytest.mark.parametrize(
@@ -459,10 +469,16 @@ def test_key_option_errors_are_json_under_json_flag(runner, valid_token, args, c
     assert data["schema_version"] == "0.1"
 
 
-def test_alg_none_is_json_under_json_flag(runner):
+def test_rejected_token_still_reports_claim_checks(runner):
     result = invoke(runner, make_unsigned_token({"sub": "1"}), "--secret", "x", "--json")
+    checks = {c["check"] for c in json.loads(result.stdout)["checks"]}
+    assert {"signature", "exp"} <= checks
+
+
+def test_empty_secret_is_a_usage_error(runner, valid_token):
+    result = invoke(runner, valid_token, "--secret", "", "--json")
     assert result.exit_code == 2
-    assert json.loads(result.output)["error"] == "unsupported_algorithm"
+    assert json.loads(result.stdout)["error"] == "invalid_key_options"
 
 
 def test_unparseable_public_key_is_json_under_json_flag(runner, tmp_path):

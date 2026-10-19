@@ -1,7 +1,6 @@
 import json
 import time
 from pathlib import Path
-from typing import NoReturn
 
 import click
 from rich.markup import escape
@@ -26,6 +25,7 @@ from jwt_toolkit.core.claims import (
 )
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.decoder import DecodedToken
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
 
@@ -105,48 +105,39 @@ def verify(
     token = resolve_token(token, as_json=as_json)
 
     decoded = safe_decode(token, as_json=as_json)
-    try:
-        alg = ensure_signing_algorithm(decoded.header)
-    except UnsupportedAlgorithmError as exc:
-        emit_error(
-            code=exc.code,
-            title=exc.title,
-            headline=exc.headline,
-            details=exc.details,
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
-
-    _validate_key_inputs(
-        alg,
-        secret=secret,
-        public_key_path=public_key_path,
-        jwks_url=jwks_url,
-        as_json=as_json,
+    _require_one_key_source(
+        secret=secret, public_key_path=public_key_path, jwks_url=jwks_url, as_json=as_json
     )
 
-    try:
-        sig_valid = _verify_signature(
-            decoded,
-            alg,
-            secret=secret,
-            public_key_path=public_key_path,
-            jwks_url=jwks_url,
+    alg, rejection = _pin_algorithm(decoded.header, uses_secret=secret is not None)
+    if alg is None:
+        signature_check = Check("FAIL", "signature", rejection or "Token is rejected")
+    else:
+        try:
+            sig_valid = _verify_signature(
+                decoded,
+                alg,
+                secret=secret,
+                public_key_path=public_key_path,
+                jwks_url=jwks_url,
+            )
+        except ValueError as exc:
+            emit_error(
+                code="key_error",
+                title="Key Error",
+                headline="Could not verify signature with the provided key",
+                details=(str(exc),),
+                as_json=as_json,
+            )
+            raise SystemExit(2) from exc
+        signature_check = (
+            Check("PASS", "signature", "Signature is valid")
+            if sig_valid
+            else Check("FAIL", "signature", "Signature is invalid, wrong key or tampered token")
         )
-    except ValueError as exc:
-        emit_error(
-            code="key_error",
-            title="Key Error",
-            headline="Could not verify signature with the provided key",
-            details=(str(exc),),
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
 
     checks = [
-        Check("PASS", "signature", "Signature is valid")
-        if sig_valid
-        else Check("FAIL", "signature", "Signature is invalid, wrong key or tampered token"),
+        signature_check,
         *check_critical_headers(decoded.header),
         *check_time_claims(decoded.payload, now=time.time(), leeway=leeway),
     ]
@@ -162,48 +153,54 @@ def verify(
         _render_results(checks, failed=failed)
 
 
-def _validate_key_inputs(
-    alg: str,
+def _require_one_key_source(
     *,
     secret: str | None,
     public_key_path: Path | None,
     jwks_url: str | None,
     as_json: bool,
 ) -> None:
-    def reject(headline: str, *details: str) -> NoReturn:
-        emit_error(
-            code="invalid_key_options",
-            title="Invalid Input",
-            headline=headline,
-            details=details,
-            as_json=as_json,
-        )
-        raise SystemExit(2)
-
-    # Enforce exactly-one key source. Counting truthy options is clearer than
-    # nested pairwise checks once a third mode enters the picture.
+    # Which key the operator supplied is a usage question (exit 2); whether the
+    # token fits that key is a verdict on the token (exit 1).
     sources = sum(x is not None for x in (secret, public_key_path, jwks_url))
-    if sources > 1:
-        reject("Pass only one of --secret, --public-key, or --jwks-url")
-
-    if is_hmac(alg):
-        if jwks_url is not None or public_key_path is not None:
-            reject(f"{alg} is an HMAC algorithm: use --secret")
-        if not secret:
-            reject(
-                f"{alg} requires --secret or --secret-file",
-                "Provide the HMAC secret the token was signed with.",
-            )
+    if sources == 1 and secret != "":
         return
+    headline = (
+        "Pass only one of --secret, --public-key, or --jwks-url"
+        if sources > 1
+        else "Provide the key to verify with"
+    )
+    emit_error(
+        code="invalid_key_options",
+        title="Invalid Input",
+        headline=headline,
+        details=(
+            "--secret or --secret-file for HS* tokens; --public-key or --jwks-url for "
+            "RS*, PS*, ES*, and Ed* tokens.",
+        ),
+        as_json=as_json,
+    )
+    raise SystemExit(2)
 
-    # Asymmetric path — accept either a PEM file or a JWKS URL.
-    if public_key_path is None and jwks_url is None:
-        reject(
-            f"{alg} requires --public-key or --jwks-url",
-            "Provide a PEM-encoded public key, or a JWKS endpoint the token's kid resolves against.",
+
+def _pin_algorithm(header: JsonObject, *, uses_secret: bool) -> tuple[str | None, str | None]:
+    # The supplied key decides the algorithm family. A token that names another
+    # family, no algorithm, or alg: none is rejected as a token, never trusted.
+    try:
+        alg = ensure_signing_algorithm(header)
+    except UnsupportedAlgorithmError as exc:
+        return None, " ".join((exc.headline, *exc.details[1:]))
+    if uses_secret and not is_hmac(alg):
+        return None, (
+            f"Token claims {alg}, but an HMAC secret was supplied; the key decides the "
+            "algorithm, so the token is rejected"
         )
-    if secret is not None:
-        reject(f"{alg} is an asymmetric algorithm: use --public-key or --jwks-url, not --secret")
+    if not uses_secret and is_hmac(alg):
+        return None, (
+            f"Token claims {alg}, but a public key was supplied; accepting it would be "
+            "algorithm confusion (CVE-2016-10555)"
+        )
+    return alg, None
 
 
 def _verify_signature(

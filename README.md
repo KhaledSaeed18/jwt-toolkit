@@ -181,7 +181,7 @@ jwt-toolkit audit <token> --strict --require iss,aud --json
 
 ### verify
 
-Checks the signature, then the registered claims. The algorithm must match the key you supply, so an RS256 public key never verifies an HS256 token, and `alg: none` is always rejected.
+Checks the signature, then the registered claims. The key you supply decides the algorithm family, so an RS256 public key never verifies an HS256 token, and `alg: none` is always rejected. A token whose `alg` is `none`, unknown, or from the other family fails the signature check as an invalid token.
 
 ```bash
 jwt-toolkit verify <token> --secret-file hs256.secret --issuer auth.example.com --audience api
@@ -201,7 +201,7 @@ jwt-toolkit verify <token> --jwks-url https://auth.example.com/.well-known/jwks.
 
 Checks performed: signature; `crit` (rejected, since no extensions are supported); `exp` (a token is expired at its `exp` second); `nbf`; `iat` not in the future; and `iss`/`aud` when requested. Time claims must be finite numbers. A missing `iss` or `aud` fails the check by name.
 
-**Exit codes**: `0` valid, `1` invalid, `2` unusable input, key, or options.
+**Exit codes**: `0` valid, `1` invalid (including `alg: none` and algorithm-confusion tokens), `2` unusable input, key, or options, such as no key or two keys.
 
 ### diff
 
