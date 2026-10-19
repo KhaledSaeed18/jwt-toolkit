@@ -9,6 +9,7 @@ from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_to
 from jwt_toolkit.cli.panels import print_success
 from jwt_toolkit.core.decoder import DecodedToken, decode_token
 from jwt_toolkit.core.diff import FieldChange, TokenDiff, diff_tokens
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import TokenDecodeError
 
 _UNVERIFIED_NOTE = "Neither token was verified. This compares contents only."
@@ -25,7 +26,7 @@ _UNVERIFIED_NOTE = "Neither token was verified. This compares contents only."
     help="Exit with status 1 when the tokens differ, for use in scripts.",
 )
 @click.pass_context
-def diff(ctx: click.Context, before: str, after: str, as_json: bool, exit_code: bool):
+def diff(ctx: click.Context, before: str, after: str, as_json: bool, exit_code: bool) -> None:
     if before == "-" and after == "-":
         emit_error(
             code="stdin_conflict",
@@ -66,7 +67,7 @@ def _decode(side: str, raw: str, *, as_json: bool) -> DecodedToken:
         raise SystemExit(2) from exc
 
 
-def _json_document(result: TokenDiff) -> dict:
+def _json_document(result: TokenDiff) -> JsonObject:
     return {
         "schema_version": JSON_SCHEMA_VERSION,
         "verified": False,
@@ -78,8 +79,8 @@ def _json_document(result: TokenDiff) -> dict:
     }
 
 
-def _json_change(change: FieldChange) -> dict:
-    entry: dict = {
+def _json_change(change: FieldChange) -> JsonObject:
+    entry: JsonObject = {
         "section": change.section,
         "path": change.path,
         "change": change.kind,

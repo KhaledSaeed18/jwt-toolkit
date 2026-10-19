@@ -6,7 +6,7 @@ from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
-from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
+from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes, PublicKeyTypes
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
@@ -37,6 +37,28 @@ ASYMMETRIC_ALGORITHMS = RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS | OKP_AL
 ALL_SIGNING_ALGORITHMS = frozenset(SUPPORTED_ALGORITHMS) | ASYMMETRIC_ALGORITHMS
 
 _CANONICAL_BY_UPPER = {name.upper(): name for name in ALL_SIGNING_ALGORITHMS}
+
+type _SigningPrivateKey = (
+    rsa.RSAPrivateKey
+    | ec.EllipticCurvePrivateKey
+    | ed25519.Ed25519PrivateKey
+    | ed448.Ed448PrivateKey
+)
+type _VerifyingPublicKey = (
+    rsa.RSAPublicKey | ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey | ed448.Ed448PublicKey
+)
+_SIGNING_PRIVATE_KEY_TYPES = (
+    rsa.RSAPrivateKey,
+    ec.EllipticCurvePrivateKey,
+    ed25519.Ed25519PrivateKey,
+    ed448.Ed448PrivateKey,
+)
+_VERIFYING_PUBLIC_KEY_TYPES = (
+    rsa.RSAPublicKey,
+    ec.EllipticCurvePublicKey,
+    ed25519.Ed25519PublicKey,
+    ed448.Ed448PublicKey,
+)
 
 
 def canonical_algorithm(name: str) -> str | None:
@@ -181,15 +203,19 @@ def algorithm_for_private_key(pem: bytes, *, passphrase: bytes | None = None) ->
     raise ValueError(f"A {type(key).__name__} cannot sign a JWS")
 
 
-def _load_private_key(pem: bytes, alg: str, *, passphrase: bytes | None = None):
+def _load_private_key(
+    pem: bytes, alg: str, *, passphrase: bytes | None = None
+) -> _SigningPrivateKey:
     key = _parse_private_key(pem, passphrase)
     _ensure_key_matches_alg(key, alg, is_private=True)
+    if not isinstance(key, _SIGNING_PRIVATE_KEY_TYPES):
+        raise ValueError(f"A {type(key).__name__} cannot sign a JWS")
     return key
 
 
-def _parse_private_key(pem: bytes, passphrase: bytes | None):
+def _parse_private_key(pem: bytes, passphrase: bytes | None) -> PrivateKeyTypes:
     try:
-        key = serialization.load_pem_private_key(pem, password=passphrase)
+        return serialization.load_pem_private_key(pem, password=passphrase)
     except TypeError as exc:
         # cryptography signals passphrase/encryption mismatches with TypeError.
         if passphrase is None:
@@ -199,10 +225,9 @@ def _parse_private_key(pem: bytes, passphrase: bytes | None):
         if passphrase is not None and b"ENCRYPTED" in pem:
             raise ValueError("Could not decrypt the private key: wrong passphrase") from exc
         raise ValueError(f"Could not parse PEM private key: {exc}") from exc
-    return key
 
 
-def _load_public_key(pem: bytes, alg: str):
+def _load_public_key(pem: bytes, alg: str) -> _VerifyingPublicKey:
     key: PublicKeyTypes
     try:
         if b"-----BEGIN CERTIFICATE-----" in pem:
@@ -214,10 +239,14 @@ def _load_public_key(pem: bytes, alg: str):
     except (ValueError, TypeError) as exc:
         raise ValueError(f"Could not parse PEM public key or certificate: {exc}") from exc
     _ensure_key_matches_alg(key, alg, is_private=False)
+    if not isinstance(key, _VERIFYING_PUBLIC_KEY_TYPES):
+        raise ValueError(f"A {type(key).__name__} cannot verify a JWS")
     return key
 
 
-def _ensure_key_matches_alg(key, alg: str, *, is_private: bool) -> None:
+def _ensure_key_matches_alg(
+    key: PrivateKeyTypes | PublicKeyTypes, alg: str, *, is_private: bool
+) -> None:
     role = "private" if is_private else "public"
     if alg in RSA_ALGORITHMS or alg in PSS_ALGORITHMS:
         expected = rsa.RSAPrivateKey if is_private else rsa.RSAPublicKey
@@ -225,8 +254,9 @@ def _ensure_key_matches_alg(key, alg: str, *, is_private: bool) -> None:
             raise ValueError(f"{alg} requires an RSA {role} key, got {type(key).__name__}")
         return
     if alg in EC_ALGORITHMS:
-        expected_ec = ec.EllipticCurvePrivateKey if is_private else ec.EllipticCurvePublicKey
-        if not isinstance(key, expected_ec):
+        if not isinstance(key, ec.EllipticCurvePrivateKey | ec.EllipticCurvePublicKey) or (
+            isinstance(key, ec.EllipticCurvePrivateKey) is not is_private
+        ):
             raise ValueError(f"{alg} requires an EC {role} key, got {type(key).__name__}")
         expected_curve = _EC_CURVE_BY_ALG[alg]
         if not isinstance(key.curve, expected_curve):
@@ -238,46 +268,40 @@ def _ensure_key_matches_alg(key, alg: str, *, is_private: bool) -> None:
             curve = "an Ed25519 or Ed448" if alg == "EdDSA" else f"an {alg}"
             raise ValueError(f"{alg} requires {curve} {role} key, got {type(key).__name__}")
         return
-    # Should be unreachable — guarded by the caller's alg check.
+    # Unreachable: callers check alg against ASYMMETRIC_ALGORITHMS first.
     raise ValueError(f"Unsupported asymmetric algorithm: {alg}")
 
 
-def _sign_with_private_key(private_key, message: bytes, alg: str) -> bytes:
-    if alg in OKP_ALGORITHMS:
+def _pss_padding(hash_alg: hashes.HashAlgorithm) -> padding.PSS:
+    # RFC 7518 3.5: the PSS salt is as long as the hash output.
+    return padding.PSS(mgf=padding.MGF1(hash_alg), salt_length=padding.PSS.DIGEST_LENGTH)
+
+
+def _sign_with_private_key(private_key: _SigningPrivateKey, message: bytes, alg: str) -> bytes:
+    if isinstance(private_key, ed25519.Ed25519PrivateKey | ed448.Ed448PrivateKey):
         # EdDSA hashes internally and emits the raw RFC 8032 signature.
         return private_key.sign(message)
     hash_alg = _HASH_BY_ALG[alg]()
-    if alg in RSA_ALGORITHMS:
-        return private_key.sign(message, padding.PKCS1v15(), hash_alg)
-    if alg in PSS_ALGORITHMS:
-        # PSS salt length per RFC 7518 §3.5: equal to the hash output size.
-        return private_key.sign(
-            message,
-            padding.PSS(mgf=padding.MGF1(hash_alg), salt_length=padding.PSS.DIGEST_LENGTH),
-            hash_alg,
-        )
-    # EC — cryptography emits DER; JWS expects raw r || s.
+    if isinstance(private_key, rsa.RSAPrivateKey):
+        pad = _pss_padding(hash_alg) if alg in PSS_ALGORITHMS else padding.PKCS1v15()
+        return private_key.sign(message, pad, hash_alg)
+    # cryptography emits DER; JWS expects the raw r || s.
     der_sig = private_key.sign(message, ec.ECDSA(hash_alg))
     return _ec_der_to_raw(der_sig, alg)
 
 
-def _verify_with_public_key(public_key, message: bytes, raw_sig: bytes, alg: str) -> None:
-    if alg in OKP_ALGORITHMS:
+def _verify_with_public_key(
+    public_key: _VerifyingPublicKey, message: bytes, raw_sig: bytes, alg: str
+) -> None:
+    if isinstance(public_key, ed25519.Ed25519PublicKey | ed448.Ed448PublicKey):
         public_key.verify(raw_sig, message)
         return
     hash_alg = _HASH_BY_ALG[alg]()
-    if alg in RSA_ALGORITHMS:
-        public_key.verify(raw_sig, message, padding.PKCS1v15(), hash_alg)
+    if isinstance(public_key, rsa.RSAPublicKey):
+        pad = _pss_padding(hash_alg) if alg in PSS_ALGORITHMS else padding.PKCS1v15()
+        public_key.verify(raw_sig, message, pad, hash_alg)
         return
-    if alg in PSS_ALGORITHMS:
-        public_key.verify(
-            raw_sig,
-            message,
-            padding.PSS(mgf=padding.MGF1(hash_alg), salt_length=padding.PSS.DIGEST_LENGTH),
-            hash_alg,
-        )
-        return
-    # EC — JWS r||s is fixed-width; reject anything else before decoding.
+    # JWS r || s is fixed-width; reject anything else before decoding.
     expected_len = _EC_RAW_SIG_HALF_BYTES[alg] * 2
     if len(raw_sig) != expected_len:
         raise InvalidSignature(

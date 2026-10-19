@@ -65,7 +65,7 @@ class _ToolkitGroup(click.Group):
     help="Disable color output (also: NO_COLOR=1).",
 )
 @click.pass_context
-def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool):
+def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool) -> None:
     # The lazy consoles read these at print time. They are removed again when the
     # command finishes so in-process callers do not inherit them.
     for name, enabled in (("NO_COLOR", no_color), ("JWT_TOOLKIT_QUIET", quiet)):

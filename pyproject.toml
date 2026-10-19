@@ -167,13 +167,10 @@ known-first-party = ["jwt_toolkit", "tests"]
 [tool.mypy]
 python_version = "3.13"
 files = ["jwt_toolkit"]   # tests intentionally excluded — they don't need types
+strict = true
 pretty = true
 show_error_codes = true
-warn_unused_ignores = true
-warn_redundant_casts = true
 warn_unreachable = true
-check_untyped_defs = true            # type-check function bodies even w/o annotations
-no_implicit_optional = true
 
 # Third-party libs that ship no stubs:
 [[tool.mypy.overrides]]

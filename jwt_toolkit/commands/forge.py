@@ -8,6 +8,7 @@ from rich.table import Table
 
 from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
+from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.forge import (
     ALL_VARIANT_NAMES,
     KEY_BASED_VARIANT_NAMES,
@@ -56,7 +57,7 @@ _INTRO = (
     is_flag=True,
     help="Emit a machine-readable JSON document instead of the rich table.",
 )
-def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: bool):
+def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: bool) -> None:
     token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
 
@@ -76,7 +77,9 @@ def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: b
         _emit_rich(variants, has_public_key=pem is not None)
 
 
-def _select_variants(decoded, *, pem: bytes | None, mode: str | None) -> list[Variant]:
+def _select_variants(
+    decoded: DecodedToken, *, pem: bytes | None, mode: str | None
+) -> list[Variant]:
     if mode is not None:
         return [forge_one(mode, decoded, public_key_pem=pem)]
     names = STATIC_VARIANT_NAMES if pem is None else STATIC_VARIANT_NAMES + KEY_BASED_VARIANT_NAMES

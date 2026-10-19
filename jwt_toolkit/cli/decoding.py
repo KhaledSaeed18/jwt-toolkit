@@ -1,12 +1,12 @@
 import json
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 import click
 
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.decoder import DecodedToken, decode_token
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import TokenDecodeError, UnsupportedAlgorithmError
 
 # Stable schema version shared by every command that emits --json errors.
@@ -59,7 +59,6 @@ def safe_decode(
     token: str,
     *,
     as_json: bool = False,
-    json_extra: Callable[[TokenDecodeError], dict] | None = None,
 ) -> DecodedToken:
     # Decode a token, rendering a consistent error panel/JSON on failure and
     # exiting with code 2. The caller never has to know about the exception types.
@@ -72,7 +71,7 @@ def safe_decode(
             headline=exc.headline,
             details=exc.details,
             as_json=as_json,
-            extra=json_extra(exc) if json_extra else None,
+            extra=None,
         )
         raise SystemExit(2) from exc
 
@@ -84,7 +83,7 @@ def emit_error(
     headline: str,
     details: tuple[str, ...] = (),
     as_json: bool,
-    extra: dict | None = None,
+    extra: JsonObject | None = None,
 ) -> None:
     # Public entry for commands: a JSON envelope under --json, a panel otherwise.
     _emit_error(
@@ -103,7 +102,7 @@ def _emit_error(
     headline: str,
     details: tuple[str, ...],
     as_json: bool,
-    extra: dict | None,
+    extra: JsonObject | None,
 ) -> None:
     if as_json:
         document = {

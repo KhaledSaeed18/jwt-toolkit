@@ -2,6 +2,8 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from jwt_toolkit.core.encoding import JsonObject
+
 # RFC 7519 section 4.1: exp, nbf, and iat are NumericDate values (seconds since the epoch).
 TIME_CLAIMS = ("iat", "nbf", "exp")
 
@@ -18,7 +20,7 @@ class TimeClaim:
     problem: str | None = None
 
 
-def describe_time_claims(payload: dict, *, now: float) -> tuple[TimeClaim, ...]:
+def describe_time_claims(payload: JsonObject, *, now: float) -> tuple[TimeClaim, ...]:
     return tuple(_describe(name, payload[name], now=now) for name in TIME_CLAIMS if name in payload)
 
 

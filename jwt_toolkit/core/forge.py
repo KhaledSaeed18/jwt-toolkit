@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from jwt_toolkit.core.decoder import DecodedToken
-from jwt_toolkit.core.encoding import base64url_encode
+from jwt_toolkit.core.encoding import JsonObject, base64url_encode
 
 # Every variant in this module is designed to be REJECTED by a correctly
 # configured verifier. The caller's job is to feed each variant at their
@@ -258,13 +258,13 @@ _BUILDERS = {
 }
 
 
-def _with_alg(header: dict, alg: str) -> dict:
+def _with_alg(header: JsonObject, alg: str) -> JsonObject:
     return {**header, "alg": alg}
 
 
-def _b64_json(obj: dict) -> str:
+def _b64_json(obj: JsonObject) -> str:
     return base64url_encode(json.dumps(obj, separators=(",", ":")).encode())
 
 
-def _emit(header: dict, payload: dict, *, signature: str) -> str:
+def _emit(header: JsonObject, payload: JsonObject, *, signature: str) -> str:
     return f"{_b64_json(header)}.{_b64_json(payload)}.{signature}"

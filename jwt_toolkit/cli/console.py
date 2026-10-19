@@ -1,4 +1,5 @@
 import os
+from typing import Any
 
 from rich.console import Console
 
@@ -25,15 +26,15 @@ class _ConsoleProxy:
             self._settings = settings
         return self._inner
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._get(), name)
 
     # Rich internals (Live, Progress) use the console as a context manager, and
     # Python looks dunder methods up on the type, so they are forwarded explicitly.
-    def __enter__(self):
+    def __enter__(self) -> Console:
         return self._get().__enter__()
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> None:
         return self._get().__exit__(*args)
 
 

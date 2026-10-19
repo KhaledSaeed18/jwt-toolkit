@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 from jwt_toolkit.core.claims import IAT_FUTURE_LEEWAY_SECONDS, is_numeric_date
 from jwt_toolkit.core.crypto import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, canonical_algorithm
+from jwt_toolkit.core.encoding import JsonObject
 
 # Symmetric algorithms — vulnerable to offline brute-force if the secret is weak.
 SYMMETRIC_ALGORITHMS = set(SUPPORTED_ALGORITHMS)
@@ -121,8 +122,8 @@ class Report:
 # individual `_audit_*` helpers or `audit()` directly — so grading and sorting
 # stay in lockstep with the findings.
 def run_audit(
-    header: dict,
-    payload: dict,
+    header: JsonObject,
+    payload: JsonObject,
     *,
     required_claims: frozenset[str] = frozenset(),
     signature: str | None = None,
@@ -149,8 +150,8 @@ def run_audit(
 
 # Legacy in-module entry point. Kept because `run_audit` composes it.
 def audit(
-    header: dict,
-    payload: dict,
+    header: JsonObject,
+    payload: JsonObject,
     *,
     required_claims: frozenset[str] = frozenset(),
 ) -> list[Finding]:
@@ -199,7 +200,7 @@ def _finding_sort_key(f: Finding) -> tuple[int, str]:
     return (_SEVERITY_ORDER[f.severity], f.field)
 
 
-def _audit_algorithm(header: dict) -> list[Finding]:
+def _audit_algorithm(header: JsonObject) -> list[Finding]:
     raw = header.get("alg", "")
     if str(raw).upper() == "NONE":
         return [
@@ -256,7 +257,7 @@ def _audit_algorithm(header: dict) -> list[Finding]:
     return findings
 
 
-def _audit_typ(header: dict) -> list[Finding]:
+def _audit_typ(header: JsonObject) -> list[Finding]:
     if "typ" not in header:
         return [
             Finding(
@@ -278,7 +279,7 @@ def _audit_typ(header: dict) -> list[Finding]:
     ]
 
 
-def _audit_kid_injection(header: dict) -> list[Finding]:
+def _audit_kid_injection(header: JsonObject) -> list[Finding]:
     kid = header.get("kid")
     if kid is None:
         return []
@@ -304,7 +305,7 @@ def _audit_kid_injection(header: dict) -> list[Finding]:
     return [Finding(Severity.PASS, "kid", "kid looks well-formed")]
 
 
-def _audit_header_key_smuggling(header: dict) -> list[Finding]:
+def _audit_header_key_smuggling(header: JsonObject) -> list[Finding]:
     findings: list[Finding] = []
     for name in _KEY_SMUGGLING_HEADERS:
         if name not in header:
@@ -367,7 +368,7 @@ def _audit_x5c(value: object) -> Finding:
 # Cross-check: HS* algorithm combined with header-supplied key material is the
 # classic key-confusion shape — the verifier may resolve the "public key" from
 # the header and then use it as an HMAC secret.
-def _audit_alg_key_confusion(header: dict) -> list[Finding]:
+def _audit_alg_key_confusion(header: JsonObject) -> list[Finding]:
     # Case-insensitive on purpose: hs256 beside a smuggled key is the same shape.
     raw = header.get("alg")
     alg = canonical_algorithm(raw) if isinstance(raw, str) else None
@@ -388,7 +389,7 @@ def _audit_alg_key_confusion(header: dict) -> list[Finding]:
     ]
 
 
-def _audit_crit(header: dict) -> list[Finding]:
+def _audit_crit(header: JsonObject) -> list[Finding]:
     if "crit" not in header:
         return []
     crit = header["crit"]
@@ -430,7 +431,7 @@ def _audit_crit(header: dict) -> list[Finding]:
     ]
 
 
-def _audit_b64(header: dict) -> list[Finding]:
+def _audit_b64(header: JsonObject) -> list[Finding]:
     if "b64" not in header:
         return []
     b64 = header["b64"]
@@ -461,7 +462,7 @@ def _audit_b64(header: dict) -> list[Finding]:
     ]
 
 
-def _audit_expiry(payload: dict) -> list[Finding]:
+def _audit_expiry(payload: JsonObject) -> list[Finding]:
     exp = payload.get("exp")
     iat = payload.get("iat")
     if exp is None:
@@ -502,7 +503,7 @@ def _audit_expiry(payload: dict) -> list[Finding]:
     return [Finding(Severity.PASS, "exp", "Token expiry looks reasonable")]
 
 
-def _audit_nbf(payload: dict) -> list[Finding]:
+def _audit_nbf(payload: JsonObject) -> list[Finding]:
     nbf = payload.get("nbf")
     if nbf is None:
         return []
@@ -513,7 +514,7 @@ def _audit_nbf(payload: dict) -> list[Finding]:
     return [Finding(Severity.PASS, "nbf", "Token is past its not-before time")]
 
 
-def _audit_iat(payload: dict) -> list[Finding]:
+def _audit_iat(payload: JsonObject) -> list[Finding]:
     iat = payload.get("iat")
     if iat is None:
         return []
@@ -539,7 +540,7 @@ def _audit_iat(payload: dict) -> list[Finding]:
     return [Finding(Severity.PASS, "iat", "iat looks sane")]
 
 
-def _audit_jti(payload: dict, *, required: bool = False) -> list[Finding]:
+def _audit_jti(payload: JsonObject, *, required: bool = False) -> list[Finding]:
     if "jti" not in payload:
         return [
             Finding(
@@ -556,7 +557,7 @@ _DEFAULT_CLAIMS = frozenset({"iss", "aud", "iat"})
 
 
 def _audit_claims(
-    payload: dict,
+    payload: JsonObject,
     *,
     required_claims: frozenset[str] = frozenset(),
 ) -> list[Finding]:
@@ -572,7 +573,7 @@ def _audit_claims(
     return findings
 
 
-def _audit_claim_types(payload: dict) -> list[Finding]:
+def _audit_claim_types(payload: JsonObject) -> list[Finding]:
     # RFC 7519 4.1.1-4.1.3: iss and sub are StringOrURI; aud is one or a list of them.
     findings: list[Finding] = []
     for claim in ("iss", "sub"):
@@ -612,7 +613,7 @@ def _json_type(value: object) -> str:
     return "object" if isinstance(value, dict) else "string"
 
 
-def _audit_sensitive_fields(payload: dict) -> list[Finding]:
+def _audit_sensitive_fields(payload: JsonObject) -> list[Finding]:
     return [
         Finding(
             Severity.WARN,
@@ -625,7 +626,7 @@ def _audit_sensitive_fields(payload: dict) -> list[Finding]:
     ]
 
 
-def _audit_sensitive_values(payload: dict) -> list[Finding]:
+def _audit_sensitive_values(payload: JsonObject) -> list[Finding]:
     # Walks nested dicts/lists looking for values that *look* like PII even when
     # the surrounding field name doesn't tip us off. Top-level keys already
     # caught by _audit_sensitive_fields are skipped to avoid duplicate findings.
@@ -673,7 +674,7 @@ def _audit_sensitive_values(payload: dict) -> list[Finding]:
     return findings
 
 
-def _walk(node, prefix: str = "") -> Iterator[tuple[str, object]]:
+def _walk(node: object, prefix: str = "") -> Iterator[tuple[str, object]]:
     # Yields (dotted_path, value) for every leaf and container in a JSON-like tree.
     if isinstance(node, dict):
         for key, value in node.items():
@@ -700,7 +701,7 @@ def _looks_like_card(digits: str) -> bool:
     return total % 10 == 0
 
 
-def _audit_signature(header: dict, signature: str | None) -> list[Finding]:
+def _audit_signature(header: JsonObject, signature: str | None) -> list[Finding]:
     # A signed algorithm with nothing after the last dot is a stripped signature.
     if signature is None or signature:
         return []

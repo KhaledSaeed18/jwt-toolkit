@@ -20,7 +20,12 @@ from jwt_toolkit.core.crypto import (
 from jwt_toolkit.core.crypto import (
     sign_asymmetric as _sign_asymmetric,
 )
-from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_encode, strict_json_loads
+from jwt_toolkit.core.encoding import (
+    JsonObject,
+    NonFiniteNumberError,
+    base64url_encode,
+    strict_json_loads,
+)
 from jwt_toolkit.core.errors import (
     ClaimConflictError,
     InvalidDurationError,
@@ -102,7 +107,7 @@ def sign(
     passphrase_path: Path | None,
     alg: str,
     header_json: str | None,
-):
+) -> None:
     try:
         secret = resolve_secret(secret, secret_path)
     except SecretInputError as exc:
@@ -188,12 +193,12 @@ def _payload_text(payload_json: str | None, payload_path: Path | None) -> str:
 
 
 def _resolve_header(
-    header: dict | None,
+    header: JsonObject | None,
     alg: str,
     *,
     private_key_path: Path | None,
     passphrase: bytes | None,
-) -> tuple[dict, bytes | None]:
+) -> tuple[JsonObject, bytes | None]:
     alg_chosen = click.get_current_context().get_parameter_source("alg") is not (
         ParameterSource.DEFAULT
     )
@@ -241,7 +246,7 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty() and sys.stderr.isatty()
 
 
-def _parse_json_arg(raw: str, *, label: str) -> dict:
+def _parse_json_arg(raw: str, *, label: str) -> JsonObject:
     try:
         value = strict_json_loads(raw)
     except NonFiniteNumberError as exc:

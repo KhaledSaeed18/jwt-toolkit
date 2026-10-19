@@ -2,8 +2,12 @@ import base64
 import binascii
 import json
 import math
+from typing import Any
 
 # JWT strips '=' padding by spec, so every encode trims it and every decode restores it.
+
+# A decoded JSON object, such as a JWT header or claims set.
+type JsonObject = dict[str, Any]
 
 
 def _pad(value: str) -> str:

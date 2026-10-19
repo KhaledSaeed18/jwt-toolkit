@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from jwt_toolkit.core.encoding import JsonObject
+
 # Clock-skew allowance before an iat in the future is reported.
 IAT_FUTURE_LEEWAY_SECONDS = 60
 
@@ -19,7 +21,7 @@ def is_numeric_date(value: object) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
-def check_critical_headers(header: dict) -> list[Check]:
+def check_critical_headers(header: JsonObject) -> list[Check]:
     checks: list[Check] = []
     # RFC 7515 4.1.11: a recipient that does not implement every extension
     # listed in crit MUST reject the token. This verifier implements none.
@@ -48,7 +50,7 @@ def check_critical_headers(header: dict) -> list[Check]:
     return checks
 
 
-def check_time_claims(payload: dict, *, now: float, leeway: int = 0) -> list[Check]:
+def check_time_claims(payload: JsonObject, *, now: float, leeway: int = 0) -> list[Check]:
     checks: list[Check] = []
 
     exp = payload.get("exp")
@@ -81,7 +83,7 @@ def check_time_claims(payload: dict, *, now: float, leeway: int = 0) -> list[Che
     return checks
 
 
-def check_issuer(payload: dict, issuer: str) -> Check:
+def check_issuer(payload: JsonObject, issuer: str) -> Check:
     if "iss" not in payload:
         return Check("FAIL", "iss", f"No iss claim, expected {issuer!r}")
     if payload["iss"] == issuer:
@@ -89,7 +91,7 @@ def check_issuer(payload: dict, issuer: str) -> Check:
     return Check("FAIL", "iss", f"Issuer mismatch: expected {issuer!r}, got {payload['iss']!r}")
 
 
-def check_audience(payload: dict, audience: str) -> Check:
+def check_audience(payload: JsonObject, audience: str) -> Check:
     # RFC 7519 4.1.3: aud is a single string or a list of strings.
     if "aud" not in payload:
         return Check("FAIL", "aud", f"No aud claim, expected {audience!r}")

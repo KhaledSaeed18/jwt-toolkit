@@ -21,6 +21,8 @@ from jwt_toolkit.core.auditor import (
     run_audit,
 )
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
+from jwt_toolkit.core.decoder import DecodedToken
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.wordlist import contains_secret
 
@@ -85,7 +87,7 @@ def audit(
     secret_path: Path | None,
     public_key_path: Path | None,
     required_claims: str,
-):
+) -> None:
     try:
         secret = resolve_secret(secret, secret_path)
     except SecretInputError as exc:
@@ -147,7 +149,7 @@ def audit(
 
 
 def _check_signature(
-    decoded, *, secret: str | None, public_key_path: Path | None
+    decoded: DecodedToken, *, secret: str | None, public_key_path: Path | None
 ) -> tuple[bool, str]:
     # Returns (valid, detail_message). Handles unsupported algorithms and key
     # mismatches gracefully so the audit report still renders.
@@ -179,7 +181,7 @@ def _check_signature(
 
 
 def _audit_key_material(
-    decoded, *, secret: str | None, public_key_path: Path | None, verified: bool
+    decoded: DecodedToken, *, secret: str | None, public_key_path: Path | None, verified: bool
 ) -> list[Finding]:
     if public_key_path is not None:
         return audit_public_key(public_key_path.read_bytes())
@@ -202,8 +204,8 @@ def _resolve_exit_code(report: Report, *, strict: bool) -> int:
 
 
 def _emit_json(
-    header: dict,
-    payload: dict,
+    header: JsonObject,
+    payload: JsonObject,
     signature: str,
     report: Report,
     *,
@@ -239,8 +241,8 @@ def _emit_json(
 
 
 def _emit_rich(
-    header: dict,
-    payload: dict,
+    header: JsonObject,
+    payload: JsonObject,
     signature: str,
     report: Report,
     sig_result: tuple[bool, str] | None,

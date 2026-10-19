@@ -49,9 +49,10 @@ _PERMITTED_SOURCE_SCHEMES = frozenset({"https", "http", "file"})
 _WORDLIST_SHA256 = "1b4bae820e98073b7148412425ea27e00cd1c4d0900ad446bdae146665ea758a"
 
 
-def _open_url(url: str):
+def _open_url(url: str) -> http.client.HTTPResponse:
     # Certificate failures must stay fatal: there is no unverified fallback.
-    return urllib.request.urlopen(url, timeout=30)  # nosec B310 - scheme checked by the caller
+    response: http.client.HTTPResponse = urllib.request.urlopen(url, timeout=30)  # nosec B310 - scheme checked by the caller
+    return response
 
 
 class _DownloadError(Exception):
@@ -175,7 +176,7 @@ def _fmt_bytes(n: int) -> str:
         "Integrity verification is skipped for custom sources."
     ),
 )
-def download_wordlists(output_dir: str, force: bool, source: str | None):
+def download_wordlists(output_dir: str, force: bool, source: str | None) -> None:
     url = source or _WORDLIST_URL
     verify_integrity = source is None
 

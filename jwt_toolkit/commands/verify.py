@@ -25,6 +25,7 @@ from jwt_toolkit.core.claims import (
     check_time_claims,
 )
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
+from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
 
@@ -88,7 +89,7 @@ def verify(
     audience: str | None,
     leeway: int,
     as_json: bool,
-):
+) -> None:
     try:
         secret = resolve_secret(secret, secret_path)
     except SecretInputError as exc:
@@ -206,7 +207,7 @@ def _validate_key_inputs(
 
 
 def _verify_signature(
-    decoded,
+    decoded: DecodedToken,
     alg: str,
     *,
     secret: str | None,

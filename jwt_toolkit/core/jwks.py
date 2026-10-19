@@ -1,14 +1,15 @@
 import json
-from typing import override
+from http.client import HTTPMessage
+from typing import IO, override
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import HTTPRedirectHandler, build_opener
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 
 from jwt_toolkit.core.crypto import canonical_algorithm
-from jwt_toolkit.core.encoding import base64url_decode
+from jwt_toolkit.core.encoding import JsonObject, base64url_decode
 
 # RFC 7517 key sets. The fetch helper is intentionally thin: stdlib urllib only, with a fixed
 # timeout. Callers (and the audit module) are responsible for trust decisions
@@ -66,13 +67,21 @@ _PERMITTED_JWKS_SCHEMES = frozenset({"https", "http", "file"})
 class _NoDowngradeRedirectHandler(HTTPRedirectHandler):
     # A JWKS fetched over https must not be silently re-fetched over plain http.
     @override
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> Request | None:
         if urlparse(req.full_url).scheme == "https" and urlparse(newurl).scheme != "https":
             raise URLError("refusing a redirect from https to a non-https URL")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch_jwks(url: str, *, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS) -> dict:
+def fetch_jwks(url: str, *, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS) -> JsonObject:
     # Retrieves and parses a JWKS document. Supports https://, http://, and
     # file:// via urllib so tests can use local files without a live server.
     # Network and JSON failures are normalised to ValueError so the CLI layer
@@ -106,7 +115,7 @@ def fetch_jwks(url: str, *, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS) -> dict:
     return document
 
 
-def select_jwk(jwks: dict, *, kid: str | None, alg: str) -> dict:
+def select_jwk(jwks: JsonObject, *, kid: str | None, alg: str) -> JsonObject:
     # Picks the single JWK that should verify a token with the given alg/kid.
     # Returns the JWK dict so the caller can decide how to materialise the key.
     keys = jwks.get("keys") or []
@@ -126,7 +135,7 @@ def select_jwk(jwks: dict, *, kid: str | None, alg: str) -> dict:
     return chosen
 
 
-def jwk_to_public_pem(jwk: dict, alg: str) -> bytes:
+def jwk_to_public_pem(jwk: JsonObject, alg: str) -> bytes:
     # Materialises a JWK into PEM bytes that `verify_asymmetric` can consume.
     # Mismatches between the JWK shape and the requested alg surface as
     # ValueError before any crypto operation runs.
@@ -164,7 +173,7 @@ def resolve_jwks_key(
     return jwk_to_public_pem(jwk, alg)
 
 
-def _filter_by_kid(keys: list, kid: str | None) -> list:
+def _filter_by_kid(keys: list[object], kid: str | None) -> list[JsonObject]:
     # If the token names a kid, require an exact match. If it does not, only
     # an unambiguous single-key JWKS is acceptable — falling back to "guess
     # the first key" is how kid-confusion bugs happen in real verifiers.
@@ -176,10 +185,10 @@ def _filter_by_kid(keys: list, kid: str | None) -> list:
         )
     if not isinstance(keys[0], dict):
         raise ValueError("JWKS key is not a JSON object")
-    return list(keys)
+    return [keys[0]]
 
 
-def _ensure_jwk_is_for_signatures(jwk: dict) -> None:
+def _ensure_jwk_is_for_signatures(jwk: JsonObject) -> None:
     # RFC 7517 4.2/4.3: a key published for encryption must not verify signatures.
     use = jwk.get("use")
     if use is not None and use != "sig":
@@ -189,7 +198,7 @@ def _ensure_jwk_is_for_signatures(jwk: dict) -> None:
         raise ValueError(f"JWK key_ops={key_ops!r} does not allow 'verify'")
 
 
-def _ensure_jwk_matches_alg(jwk: dict, alg: str) -> None:
+def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
     alg = canonical_algorithm(alg) or alg
     expected_kty = _KTY_BY_ALG.get(alg)
     if expected_kty is None:
@@ -224,7 +233,7 @@ def _ensure_jwk_matches_alg(jwk: dict, alg: str) -> None:
             )
 
 
-def _rsa_public_key_from_jwk(jwk: dict) -> rsa.RSAPublicKey:
+def _rsa_public_key_from_jwk(jwk: JsonObject) -> rsa.RSAPublicKey:
     try:
         n = _b64url_to_int(jwk["n"])
         e = _b64url_to_int(jwk["e"])
@@ -235,7 +244,7 @@ def _rsa_public_key_from_jwk(jwk: dict) -> rsa.RSAPublicKey:
     return rsa.RSAPublicNumbers(e=e, n=n).public_key()
 
 
-def _ec_public_key_from_jwk(jwk: dict, alg: str) -> ec.EllipticCurvePublicKey:
+def _ec_public_key_from_jwk(jwk: JsonObject, alg: str) -> ec.EllipticCurvePublicKey:
     crv = jwk.get("crv")
     curve_cls = _CURVE_BY_CRV.get(str(crv))
     if curve_cls is None:
@@ -252,7 +261,7 @@ def _ec_public_key_from_jwk(jwk: dict, alg: str) -> ec.EllipticCurvePublicKey:
     return ec.EllipticCurvePublicNumbers(x=x, y=y, curve=curve_cls()).public_key()
 
 
-def _okp_public_key_from_jwk(jwk: dict) -> ed25519.Ed25519PublicKey | ed448.Ed448PublicKey:
+def _okp_public_key_from_jwk(jwk: JsonObject) -> ed25519.Ed25519PublicKey | ed448.Ed448PublicKey:
     x = jwk.get("x")
     if not isinstance(x, str):
         raise ValueError("OKP JWK is missing required field: 'x'")

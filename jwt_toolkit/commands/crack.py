@@ -105,7 +105,7 @@ def crack(
     encoding: str,
     output: Path | None,
     as_json: bool,
-):
+) -> None:
     token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
 

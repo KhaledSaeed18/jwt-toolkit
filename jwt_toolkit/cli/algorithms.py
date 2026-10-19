@@ -4,10 +4,11 @@ from jwt_toolkit.core.crypto import (
     SUPPORTED_ALGORITHMS,
     canonical_algorithm,
 )
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 
 
-def ensure_hmac_algorithm(header: dict, *, action: str) -> str:
+def ensure_hmac_algorithm(header: JsonObject, *, action: str) -> str:
     # Validates that the token's alg is one we can sign/verify with HMAC.
     # `action` is the verb used in error copy — "verify"/"crack"/etc.
     alg = str(header.get("alg", "")).upper()
@@ -40,7 +41,7 @@ def ensure_hmac_algorithm(header: dict, *, action: str) -> str:
     return alg
 
 
-def ensure_signing_algorithm(header: dict) -> str:
+def ensure_signing_algorithm(header: JsonObject) -> str:
     # Validates that the token's alg is any signing algorithm we can verify
     # (HMAC or asymmetric). alg is case-sensitive (RFC 7515 4.1.1), so only
     # the exact registered spelling is accepted.
