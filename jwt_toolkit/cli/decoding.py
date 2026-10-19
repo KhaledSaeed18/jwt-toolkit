@@ -20,13 +20,16 @@ def resolve_token(raw: str, *, as_json: bool = False) -> str:
       -        read from stdin
       @<path>  read from a file
       <token>  use as-is
+
+    A leading "Bearer " is dropped, so a value copied from an Authorization
+    header works as-is.
     """
     if raw == "-":
-        return sys.stdin.read().strip()
+        return _strip_bearer(sys.stdin.read())
     if raw.startswith("@"):
         path = raw[1:]
         try:
-            return Path(path).read_text(encoding="utf-8").strip()
+            return _strip_bearer(Path(path).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError) as exc:
             reason = (
                 "The file is not UTF-8 text"
@@ -42,7 +45,14 @@ def resolve_token(raw: str, *, as_json: bool = False) -> str:
                 extra=None,
             )
             raise SystemExit(2) from exc
-    return raw
+    return _strip_bearer(raw)
+
+
+def _strip_bearer(value: str) -> str:
+    # RFC 6750 2.1: the auth scheme name is case-insensitive.
+    value = value.strip()
+    scheme, _, rest = value.partition(" ")
+    return rest.strip() if scheme.lower() == "bearer" and rest else value
 
 
 def safe_decode(

@@ -138,3 +138,23 @@ def test_non_ascii_header_is_a_base64url_error(runner, valid_token):
     result = invoke(runner, f"eyJé.{payload}.{signature}", "--json")
     assert result.exit_code == 2
     assert json.loads(result.stdout)["error"] == "invalid_base64url"
+
+
+@pytest.mark.parametrize("prefix", ["Bearer ", "bearer ", "BEARER   "])
+def test_bearer_prefix_is_accepted(runner, valid_token, prefix):
+    result = invoke(runner, f"{prefix}{valid_token}", "--json")
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["payload"]["sub"] == "1"
+
+
+def test_bearer_prefix_is_accepted_from_a_file(runner, valid_token, tmp_path):
+    path = tmp_path / "header.txt"
+    path.write_text(f"Bearer {valid_token}\n")
+    result = invoke(runner, f"@{path}", "--json")
+    assert result.exit_code == 0
+
+
+def test_bearer_alone_is_not_a_token(runner):
+    result = invoke(runner, "Bearer", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"] == "invalid_structure"
