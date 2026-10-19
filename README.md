@@ -1,7 +1,7 @@
 # JWT Toolkit
 
 <p align="center">
-  <a href="https://pypi.org/project/jwt-toolkit/"><img src="https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main/assets/images/hero.png" alt="jwt-toolkit: audit flags a weak HS256 token, crack finds its secret in the bundled wordlist, and verify checks a strong token's signature and claims" width="900"></a>
+  <a href="https://pypi.org/project/jwt-toolkit/"><img src="https://raw.githubusercontent.com/KhaledSaeed18/jwt-toolkit/main/assets/images/hero.png" alt="jwt-toolkit: an HS256 token split into header, payload, and signature, with the signature highlighted because crack recovered its secret from the bundled wordlist" width="900"></a>
 </p>
 
 <p align="center">
