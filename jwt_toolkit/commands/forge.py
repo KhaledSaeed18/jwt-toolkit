@@ -6,7 +6,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.forge import (
@@ -129,7 +129,7 @@ def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
         )
 
     if not has_public_key:
-        console.print(
+        status_console.print(
             Panel(
                 "[dim]Pass --public-key to also emit the hs_rs_confusion variant "
                 "(CVE-2016-10555).[/dim]",

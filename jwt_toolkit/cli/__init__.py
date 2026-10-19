@@ -84,11 +84,12 @@ Run `jwt-toolkit COMMAND --help` for command-specific options.
 )
 @click.pass_context
 def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool):
-    # Set env vars before the lazy console is first used by any subcommand.
-    if no_color:
-        os.environ["NO_COLOR"] = "1"
-    if quiet:
-        os.environ["JWT_TOOLKIT_QUIET"] = "1"
+    # The lazy consoles read these at print time. They are removed again when the
+    # command finishes so in-process callers do not inherit them.
+    for name, enabled in (("NO_COLOR", no_color), ("JWT_TOOLKIT_QUIET", quiet)):
+        if enabled and name not in os.environ:
+            os.environ[name] = "1"
+            ctx.call_on_close(lambda name=name: os.environ.pop(name, None))
 
     # The banner is only rendered for the bare `jwt-toolkit` invocation.
     # Printing it for every subcommand would corrupt --json output and noisily

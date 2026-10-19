@@ -18,7 +18,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.panels import print_error, print_success
 
 # Download command — fetches the common-secrets wordlist for this release from the jwt-toolkit repo.
@@ -58,7 +58,7 @@ def _download(url: str, dest: Path) -> int:
         TransferSpeedColumn(),
         TimeRemainingColumn(),
         TimeElapsedColumn(),
-        console=console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
+        console=status_console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
         transient=True,
     ) as progress:
         try:
@@ -177,8 +177,8 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
         return
 
     if source:
-        console.print(f"[dim]Source   : {escape(url)}[/dim]")
-    console.print(f"[dim]Saving to: {escape(str(dest))}[/dim]")
+        status_console.print(f"[dim]Source   : {escape(url)}[/dim]")
+    status_console.print(f"[dim]Saving to: {escape(str(dest))}[/dim]")
 
     try:
         written = _download(url, dest)

@@ -98,9 +98,7 @@ def test_raw_base64_round_trips_to_requested_bytes(runner):
     assert len(base64.urlsafe_b64decode(result.output.strip())) == 32
 
 
-def test_raw_output_survives_quiet_mode(runner, monkeypatch):
-    # --quiet writes JWT_TOOLKIT_QUIET into os.environ; monkeypatch restores it afterwards.
-    monkeypatch.setenv("JWT_TOOLKIT_QUIET", "1")
+def test_raw_output_survives_quiet_mode(runner):
     result = runner.invoke(cli, ["--quiet", "generate-secret", "--raw"])
     assert result.exit_code == 0
     assert re.fullmatch(r"[0-9a-f]{64}\n", result.output)

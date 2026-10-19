@@ -17,7 +17,7 @@ from rich.progress import (
 )
 
 from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
-from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.decoding import render_algorithm_error, resolve_token, safe_decode
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.cracker import MIN_PARALLEL_CANDIDATES, find_secret
@@ -164,8 +164,7 @@ def crack(token: str, wordlist: str | None, threads: int, encoding: str, output:
             )
             raise SystemExit(2)
         wordlist = str(bundled)
-        if not os.environ.get("JWT_TOOLKIT_QUIET"):
-            console.print("[dim]Wordlist : bundled common-secrets.txt[/dim]")
+        status_console.print("[dim]Wordlist : bundled common-secrets.txt[/dim]")
 
     raw_count = _count_raw_lines(wordlist)
     if raw_count == 0:
@@ -188,13 +187,12 @@ def crack(token: str, wordlist: str | None, threads: int, encoding: str, output:
         )
         raise SystemExit(2) from exc
 
-    if not os.environ.get("JWT_TOOLKIT_QUIET"):
-        console.print(
-            f"[dim]Algorithm : {alg}   "
-            f"Candidates : ~{total_estimate:,}   "
-            f"Workers : {workers}   "
-            f"Encoding : {encoding}[/dim]"
-        )
+    status_console.print(
+        f"[dim]Algorithm : {alg}   "
+        f"Candidates : ~{total_estimate:,}   "
+        f"Workers : {workers}   "
+        f"Encoding : {encoding}[/dim]"
+    )
 
     result, final_attempts, elapsed = _run_crack(
         wordlist,
@@ -235,7 +233,7 @@ def _run_crack(
         TaskProgressColumn(),
         TextColumn("[dim]{task.fields[rate]}[/dim]"),
         TimeElapsedColumn(),
-        console=console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
+        console=status_console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
         transient=True,
     ) as progress:
         task = progress.add_task("Cracking…", total=total_estimate, rate="-")

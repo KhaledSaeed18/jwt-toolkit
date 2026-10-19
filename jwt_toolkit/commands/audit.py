@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
-from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
 from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
@@ -235,7 +235,7 @@ def _emit_rich(
     console.print(_render_findings_table(report))
     footer = _render_footer(report)
     if footer is not None:
-        console.print(footer)
+        status_console.print(footer)
 
 
 def _render_verdict(report: Report) -> Panel:

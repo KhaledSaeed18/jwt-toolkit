@@ -26,20 +26,21 @@ def resolve_token(raw: str, *, as_json: bool = False) -> str:
     if raw.startswith("@"):
         path = raw[1:]
         try:
-            with Path(path).open() as fh:
-                return fh.read().strip()
-        except OSError as exc:
-            if as_json:
-                _emit_error(
-                    code="token_unreadable",
-                    title="Input Error",
-                    headline=f"Cannot read token from {path!r}",
-                    details=(exc.strerror or type(exc).__name__,),
-                    as_json=True,
-                    extra=None,
-                )
-            else:
-                click.echo(f"Cannot read token from {path!r}: {exc}", err=True)
+            return Path(path).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            reason = (
+                "The file is not UTF-8 text"
+                if isinstance(exc, UnicodeDecodeError)
+                else exc.strerror or type(exc).__name__
+            )
+            _emit_error(
+                code="token_unreadable",
+                title="Input Error",
+                headline=f"Cannot read token from {path!r}",
+                details=(reason,),
+                as_json=as_json,
+                extra=None,
+            )
             raise SystemExit(2) from exc
     return raw
 
