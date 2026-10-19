@@ -175,7 +175,31 @@ def verify_asymmetric(
 # breaking importers.
 
 
+def algorithm_for_private_key(pem: bytes, *, passphrase: bytes | None = None) -> str:
+    # The default algorithm for a key: RS256 for RSA, the ES* that RFC 7518 3.4
+    # pairs with the curve, and the fully-specified EdDSA name (RFC 9864).
+    key = _parse_private_key(pem, passphrase)
+    if isinstance(key, rsa.RSAPrivateKey):
+        return "RS256"
+    if isinstance(key, ec.EllipticCurvePrivateKey):
+        for alg, curve in _EC_CURVE_BY_ALG.items():
+            if isinstance(key.curve, curve):
+                return alg
+        raise ValueError(f"EC curve {key.curve.name} has no JWS algorithm")
+    if isinstance(key, ed25519.Ed25519PrivateKey):
+        return "Ed25519"
+    if isinstance(key, ed448.Ed448PrivateKey):
+        return "Ed448"
+    raise ValueError(f"A {type(key).__name__} cannot sign a JWS")
+
+
 def _load_private_key(pem: bytes, alg: str, *, passphrase: bytes | None = None):
+    key = _parse_private_key(pem, passphrase)
+    _ensure_key_matches_alg(key, alg, is_private=True)
+    return key
+
+
+def _parse_private_key(pem: bytes, passphrase: bytes | None):
     try:
         key = serialization.load_pem_private_key(pem, password=passphrase)
     except TypeError as exc:
@@ -187,7 +211,6 @@ def _load_private_key(pem: bytes, alg: str, *, passphrase: bytes | None = None):
         if passphrase is not None and b"ENCRYPTED" in pem:
             raise ValueError("Could not decrypt the private key: wrong passphrase") from exc
         raise ValueError(f"Could not parse PEM private key: {exc}") from exc
-    _ensure_key_matches_alg(key, alg, is_private=True)
     return key
 
 

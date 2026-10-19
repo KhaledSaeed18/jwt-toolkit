@@ -4,12 +4,14 @@ import time
 from pathlib import Path
 
 import click
+from click.core import ParameterSource
 
 from jwt_toolkit.cli.algorithms import is_asymmetric, is_hmac
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.crypto import (
     ALL_SIGNING_ALGORITHMS,
+    algorithm_for_private_key,
     canonical_algorithm,
 )
 from jwt_toolkit.core.crypto import (
@@ -81,7 +83,10 @@ _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
     default="HS256",
     show_default=True,
     type=click.Choice(_ALG_CHOICES, case_sensitive=False),
-    help="Signing algorithm (ignored if --header overrides 'alg').",
+    help=(
+        "Signing algorithm (ignored if --header sets 'alg'). With --private-key and no "
+        "--alg, it follows the key: RS256, ES256/384/512, Ed25519, or Ed448."
+    ),
 )
 @click.option(
     "--header",
@@ -115,15 +120,12 @@ def sign(
         except (InvalidDurationError, ClaimConflictError) as exc:
             print_error(f"--expires-in: {exc.headline}", *exc.details, title="Invalid Input")
             raise SystemExit(2) from exc
-    header = (
-        {"alg": alg, "typ": "JWT"}
-        if header_json is None
-        else _parse_json_arg(header_json, label="header")
+    header, passphrase = _resolve_header(
+        None if header_json is None else _parse_json_arg(header_json, label="header"),
+        alg,
+        private_key_path=private_key_path if secret is None else None,
+        passphrase=_read_passphrase(passphrase_path) if passphrase_path else None,
     )
-
-    if "alg" not in header:
-        # The emitted header must declare the algorithm actually used to sign.
-        header = {"alg": alg, **header}
     sign_alg = header["alg"]
     if not isinstance(sign_alg, str) or sign_alg not in ALL_SIGNING_ALGORITHMS:
         details = [f"Supported: {', '.join(_ALG_CHOICES)}"]
@@ -149,23 +151,14 @@ def sign(
         signature = _sign_hmac(header_b64, payload_b64, secret or "", sign_alg)
     else:
         pem_bytes = private_key_path.read_bytes()  # type: ignore[union-attr]
-        passphrase = _read_passphrase(passphrase_path) if passphrase_path else None
         try:
             try:
                 signature = _sign_asymmetric(
                     header_b64, payload_b64, pem_bytes, sign_alg, passphrase=passphrase
                 )
             except KeyPassphraseRequiredError:
-                if not _is_interactive():
-                    print_error(
-                        "The private key is encrypted",
-                        "Pass --passphrase-file, or run in a terminal to be prompted.",
-                        title="Key Error",
-                    )
-                    raise SystemExit(2) from None
-                prompted = click.prompt("Private key passphrase", hide_input=True, err=True)
                 signature = _sign_asymmetric(
-                    header_b64, payload_b64, pem_bytes, sign_alg, passphrase=prompted.encode()
+                    header_b64, payload_b64, pem_bytes, sign_alg, passphrase=_prompt_passphrase()
                 )
         except ValueError as exc:
             print_error(
@@ -195,6 +188,50 @@ def _payload_text(payload_json: str | None, payload_path: Path | None) -> str:
     except UnicodeDecodeError as exc:
         print_error("--payload-file must contain UTF-8 JSON", title="Invalid Input")
         raise SystemExit(2) from exc
+
+
+def _resolve_header(
+    header: dict | None,
+    alg: str,
+    *,
+    private_key_path: Path | None,
+    passphrase: bytes | None,
+) -> tuple[dict, bytes | None]:
+    alg_chosen = click.get_current_context().get_parameter_source("alg") is not (
+        ParameterSource.DEFAULT
+    )
+    if private_key_path is not None and not alg_chosen and (header is None or "alg" not in header):
+        # The HS256 default cannot use a private key, so the key decides.
+        alg, passphrase = _infer_algorithm(private_key_path.read_bytes(), passphrase)
+    if header is None:
+        return {"alg": alg, "typ": "JWT"}, passphrase
+    if "alg" not in header:
+        # The emitted header must declare the algorithm actually used to sign.
+        return {"alg": alg, **header}, passphrase
+    return header, passphrase
+
+
+def _infer_algorithm(pem: bytes, passphrase: bytes | None) -> tuple[str, bytes | None]:
+    try:
+        try:
+            return algorithm_for_private_key(pem, passphrase=passphrase), passphrase
+        except KeyPassphraseRequiredError:
+            passphrase = _prompt_passphrase()
+            return algorithm_for_private_key(pem, passphrase=passphrase), passphrase
+    except ValueError as exc:
+        print_error("Could not use the provided private key", str(exc), title="Key Error")
+        raise SystemExit(2) from exc
+
+
+def _prompt_passphrase() -> bytes:
+    if not _is_interactive():
+        print_error(
+            "The private key is encrypted",
+            "Pass --passphrase-file, or run in a terminal to be prompted.",
+            title="Key Error",
+        )
+        raise SystemExit(2)
+    return click.prompt("Private key passphrase", hide_input=True, err=True).encode()
 
 
 def _read_passphrase(path: Path) -> bytes:
