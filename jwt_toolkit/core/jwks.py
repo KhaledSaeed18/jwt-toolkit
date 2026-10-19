@@ -1,7 +1,8 @@
 import json
-from urllib.error import URLError
+from typing import override
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import HTTPRedirectHandler, build_opener
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
@@ -16,6 +17,10 @@ from jwt_toolkit.core.encoding import base64url_decode
 # such as host allow-listing — this module just retrieves and parses.
 
 JWKS_FETCH_TIMEOUT_SECONDS = 10
+
+# Real key sets are a few kilobytes; the cap stops a hostile endpoint from
+# streaming an unbounded body into memory.
+MAX_JWKS_BYTES = 1_048_576
 
 # JWS algorithm → expected JWK key-type. Used to reject mismatches at selection
 # time rather than producing a confusing crypto error later.
@@ -60,6 +65,15 @@ _CURVE_BY_CRV: dict[str, type[ec.EllipticCurve]] = {
 _PERMITTED_JWKS_SCHEMES = frozenset({"https", "http", "file"})
 
 
+class _NoDowngradeRedirectHandler(HTTPRedirectHandler):
+    # A JWKS fetched over https must not be silently re-fetched over plain http.
+    @override
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlparse(req.full_url).scheme == "https" and urlparse(newurl).scheme != "https":
+            raise URLError("refusing a redirect from https to a non-https URL")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch_jwks(url: str, *, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS) -> dict:
     # Retrieves and parses a JWKS document. Supports https://, http://, and
     # file:// via urllib so tests can use local files without a live server.
@@ -67,12 +81,24 @@ def fetch_jwks(url: str, *, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS) -> dict:
     # has a single exception class to render.
     scheme = urlparse(url).scheme
     if scheme not in _PERMITTED_JWKS_SCHEMES:
-        raise ValueError(f"JWKS URL scheme {scheme!r} is not permitted — use https or http")
+        raise ValueError(f"JWKS URL scheme {scheme!r} is not permitted, use https, http, or file")
+    opener = build_opener(_NoDowngradeRedirectHandler)
     try:
-        with urlopen(url, timeout=timeout) as response:  # nosec B310 — scheme validated above
-            body = response.read()
-    except (URLError, ValueError, OSError) as exc:
+        with opener.open(url, timeout=timeout) as response:  # nosec B310 - scheme validated above
+            body = response.read(MAX_JWKS_BYTES + 1)
+    except HTTPError as exc:
+        raise ValueError(
+            f"Could not fetch JWKS from {url!r}: HTTP {exc.code} {exc.reason}"
+        ) from exc
+    except URLError as exc:
+        reason = getattr(exc.reason, "strerror", None) or str(exc.reason)
+        raise ValueError(f"Could not fetch JWKS from {url!r}: {reason}") from exc
+    except (ValueError, OSError) as exc:
         raise ValueError(f"Could not fetch JWKS from {url!r}: {exc}") from exc
+    if len(body) > MAX_JWKS_BYTES:
+        raise ValueError(
+            f"JWKS at {url!r} is larger than {MAX_JWKS_BYTES // 1024} KiB, refusing it"
+        )
     try:
         document = json.loads(body)
     except json.JSONDecodeError as exc:
@@ -97,6 +123,7 @@ def select_jwk(jwks: dict, *, kid: str | None, alg: str) -> dict:
         raise ValueError(f"Multiple JWKS keys match kid={kid!r} — JWKS is ambiguous")
 
     chosen = candidates[0]
+    _ensure_jwk_is_for_signatures(chosen)
     _ensure_jwk_matches_alg(chosen, alg)
     return chosen
 
@@ -155,6 +182,16 @@ def _filter_by_kid(keys: list, kid: str | None) -> list:
     if not isinstance(keys[0], dict):
         raise ValueError("JWKS key is not a JSON object")
     return list(keys)
+
+
+def _ensure_jwk_is_for_signatures(jwk: dict) -> None:
+    # RFC 7517 4.2/4.3: a key published for encryption must not verify signatures.
+    use = jwk.get("use")
+    if use is not None and use != "sig":
+        raise ValueError(f"JWK use={use!r} is not 'sig', so it cannot verify signatures")
+    key_ops = jwk.get("key_ops")
+    if key_ops is not None and (not isinstance(key_ops, list) or "verify" not in key_ops):
+        raise ValueError(f"JWK key_ops={key_ops!r} does not allow 'verify'")
 
 
 def _ensure_jwk_matches_alg(jwk: dict, alg: str) -> None:
