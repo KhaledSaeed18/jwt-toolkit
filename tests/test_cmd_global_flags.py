@@ -42,7 +42,8 @@ def test_crack_status_lines_shown_without_quiet(runner, tmp_path):
     wordlist = tmp_path / "wl.txt"
     wordlist.write_text("nope\n")
     result = runner.invoke(cli, ["crack", make_token({"sub": "1"}), str(wordlist)])
-    assert "Algorithm :" in result.stdout
+    assert "Algorithm :" in result.stderr
+    assert "Algorithm :" not in result.stdout
 
 
 def test_error_panels_go_to_stderr(runner):

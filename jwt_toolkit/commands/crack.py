@@ -1,8 +1,10 @@
 import binascii
+import json
 import os
 import time
-from importlib.resources import files
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 import click
 from rich.markup import escape
@@ -18,83 +20,38 @@ from rich.progress import (
 
 from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.cli.console import console, status_console
-from jwt_toolkit.cli.decoding import render_algorithm_error, resolve_token, safe_decode
-from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
+from jwt_toolkit.cli.wordlists import BUNDLED_WORDLIST_NAME, bundled_wordlist
 from jwt_toolkit.core.cracker import MIN_PARALLEL_CANDIDATES, find_secret
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
-from jwt_toolkit.core.encoding import base64_decode_padded, base64url_decode
+from jwt_toolkit.core.encoding import base64url_decode
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
-
-# Crack command — brute-forces a weak HMAC JWT secret against a wordlist.
-
-# Expansion factor used to estimate total candidates before streaming starts.
-_ENCODING_MULTIPLIER = {"utf-8": 1, "hex": 1, "base64": 1, "all": 3}
-
-_BUNDLED_WORDLIST = "common-secrets.txt"
+from jwt_toolkit.core.wordlist import (
+    ENCODING_MULTIPLIER,
+    ENCODINGS,
+    Candidate,
+    count_lines,
+    iter_candidates,
+)
 
 # Measured: beyond ~4 workers the single reader process is the bottleneck.
 _DEFAULT_WORKERS = min(os.cpu_count() or 1, 4)
 
 
-def _wordlist_lines(wordlist_path: str):
-    # Yield each candidate line as raw bytes. Only the line terminator and a
-    # leading BOM are removed: spaces, tabs, and a leading "#" can all be part
-    # of a real secret. Lines are bytes so non-UTF-8 secrets are still tried.
-    with Path(wordlist_path).open("rb") as f:
-        for index, line in enumerate(f):
-            word = line.rstrip(b"\r\n")
-            if index == 0:
-                word = word.removeprefix(b"\xef\xbb\xbf")
-            if word:
-                yield word
+@dataclass(frozen=True)
+class _Outcome:
+    alg: str
+    encoding: str
+    wordlist: str
+    total_estimate: int
+    attempts: int
+    elapsed: float
+    match: Candidate | None
+    position: int | None
 
-
-def _iter_candidates(wordlist_path: str, encoding: str):
-    """Stream (label, secret_bytes) pairs from a wordlist file.
-
-    Dedup is per line only (across --encoding all expansions), so memory
-    stays flat however large the wordlist is.
-    """
-    for raw in _wordlist_lines(wordlist_path):
-        word = raw.decode("utf-8", errors="replace")
-        seen: set[bytes] = set()
-        if encoding in ("utf-8", "all"):
-            seen.add(raw)
-            yield word, raw
-        if encoding in ("hex", "all"):
-            try:
-                sbytes = bytes.fromhex(word)
-            except ValueError:
-                pass
-            else:
-                if sbytes not in seen:
-                    seen.add(sbytes)
-                    yield f"{word} [hex]", sbytes
-        if encoding in ("base64", "all"):
-            try:
-                sbytes = base64_decode_padded(word)
-            # Invalid base64; skip and try next candidate.
-            except Exception:  # nosec B110
-                pass
-            else:
-                if sbytes not in seen:
-                    seen.add(sbytes)
-                    yield f"{word} [b64]", sbytes
-
-
-def _count_raw_lines(wordlist_path: str) -> int:
-    """Fast pre-scan: count candidate lines."""
-    return sum(1 for _ in _wordlist_lines(wordlist_path))
-
-
-def _bundled_wordlist() -> Path | None:
-    # Wheels ship the list as package data; a source checkout keeps it at the
-    # repository root, which is where editable installs find it.
-    packaged = files("jwt_toolkit") / "wordlists" / _BUNDLED_WORDLIST
-    if packaged.is_file():
-        return Path(str(packaged))
-    checkout = Path(__file__).resolve().parents[2] / "wordlists" / _BUNDLED_WORDLIST
-    return checkout if checkout.is_file() else None
+    @property
+    def rate(self) -> float:
+        return self.attempts / self.elapsed if self.elapsed > 0 else 0
 
 
 def _format_rate(rate: float) -> str:
@@ -113,7 +70,9 @@ def _format_rate(rate: float) -> str:
 )
 @click.argument("token")
 @click.argument(
-    "wordlist", required=False, type=click.Path(exists=True, dir_okay=False, readable=True)
+    "wordlist",
+    required=False,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
 )
 @click.option(
     "--workers",
@@ -126,7 +85,7 @@ def _format_rate(rate: float) -> str:
 )
 @click.option(
     "--encoding",
-    type=click.Choice(["utf-8", "hex", "base64", "all"]),
+    type=click.Choice(ENCODINGS),
     default="utf-8",
     show_default=True,
     help="How to interpret each candidate before signing",
@@ -134,61 +93,77 @@ def _format_rate(rate: float) -> str:
 @click.option(
     "--output",
     default=None,
-    type=click.Path(),
-    help="Write found secret to this file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Write the found secret to this file (created owner-readable only)",
 )
-def crack(token: str, wordlist: str | None, threads: int, encoding: str, output: str | None):
-    token = resolve_token(token)
-    decoded = safe_decode(token)
+@click.option("--json", "as_json", is_flag=True, help="Emit a machine-readable JSON report.")
+def crack(
+    token: str,
+    wordlist: Path | None,
+    *,
+    threads: int,
+    encoding: str,
+    output: Path | None,
+    as_json: bool,
+):
+    token = resolve_token(token, as_json=as_json)
+    decoded = safe_decode(token, as_json=as_json)
 
-    if not decoded.signature:
-        print_error(
-            "Token has an empty signature — nothing to crack",
-            "An empty signature is characteristic of an alg:none attack",
-            "Use audit to examine the token structure",
-            title="Cannot Crack",
-        )
+    def fail(code: str, headline: str, *details: str, title: str = "Cannot Crack") -> NoReturn:
+        emit_error(code=code, title=title, headline=headline, details=details, as_json=as_json)
         raise SystemExit(2)
 
     try:
         alg = ensure_hmac_algorithm(decoded.header, action="crack")
     except UnsupportedAlgorithmError as exc:
-        render_algorithm_error(exc)
+        emit_error(
+            code="unsupported_algorithm",
+            title=exc.title,
+            headline=exc.headline,
+            details=exc.details,
+            as_json=as_json,
+        )
         raise SystemExit(2) from exc
 
+    if not decoded.signature:
+        fail(
+            "signature_missing",
+            "Token has an empty signature, so there is nothing to crack",
+            "A signature stripped from an HMAC token is an attack shape",
+            "Use audit to examine the token structure",
+        )
+    try:
+        signature = base64url_decode(decoded.signature)
+    except binascii.Error:
+        fail("invalid_base64url", "Token signature is not valid base64url, nothing to crack")
+
+    wordlist_label = str(wordlist)
     if wordlist is None:
-        bundled = _bundled_wordlist()
-        if bundled is None:
-            print_error(
+        wordlist = bundled_wordlist()
+        if wordlist is None:
+            fail(
+                "wordlist_missing",
                 "No wordlist given and the bundled wordlist is missing",
                 "Pass a WORDLIST path, or fetch one with: jwt-toolkit download-wordlists",
                 title="Invalid Wordlist",
             )
-            raise SystemExit(2)
-        wordlist = str(bundled)
-        status_console.print("[dim]Wordlist : bundled common-secrets.txt[/dim]")
-
-    raw_count = _count_raw_lines(wordlist)
-    if raw_count == 0:
-        print_error(
-            "Wordlist is empty",
-            f"File : {wordlist}",
-            title="Invalid Wordlist",
-        )
-        raise SystemExit(2)
-
-    total_estimate = raw_count * _ENCODING_MULTIPLIER.get(encoding, 1)
-    workers = threads if total_estimate >= MIN_PARALLEL_CANDIDATES else 1
+        wordlist_label = f"bundled {BUNDLED_WORDLIST_NAME}"
+        status_console.print(f"[dim]Wordlist : {wordlist_label}[/dim]")
 
     try:
-        signature = base64url_decode(decoded.signature)
-    except binascii.Error as exc:
-        print_error(
-            "Token signature is not valid base64url — nothing to crack",
-            title="Cannot Crack",
+        raw_count = count_lines(wordlist)
+    except OSError as exc:
+        fail(
+            "wordlist_unreadable",
+            "Cannot read the wordlist",
+            exc.strerror or type(exc).__name__,
+            title="Invalid Wordlist",
         )
-        raise SystemExit(2) from exc
+    if raw_count == 0:
+        fail("wordlist_empty", "Wordlist is empty", f"File : {wordlist}", title="Invalid Wordlist")
 
+    total_estimate = raw_count * ENCODING_MULTIPLIER[encoding]
+    workers = threads if total_estimate >= MIN_PARALLEL_CANDIDATES else 1
     status_console.print(
         f"[dim]Algorithm : {alg}   "
         f"Candidates : ~{total_estimate:,}   "
@@ -196,35 +171,47 @@ def crack(token: str, wordlist: str | None, threads: int, encoding: str, output:
         f"Encoding : {encoding}[/dim]"
     )
 
-    result, final_attempts, elapsed = _run_crack(
+    outcome = _run_crack(
         wordlist,
+        wordlist_label=wordlist_label,
         encoding=encoding,
         total_estimate=total_estimate,
         workers=workers,
         alg=alg,
-        header_b64=decoded.header_b64,
-        payload_b64=decoded.payload_b64,
+        signing_input=f"{decoded.header_b64}.{decoded.payload_b64}".encode(),
         signature=signature,
     )
-    avg_rate = final_attempts / elapsed if elapsed > 0 else 0
 
-    if result is not None:
-        _render_found(result, alg, total_estimate, elapsed, avg_rate, output=output)
-        raise SystemExit(1)
-    _render_not_found(alg, final_attempts, elapsed, avg_rate)
+    saved: Path | None = None
+    save_error: str | None = None
+    if outcome.match is not None and output is not None:
+        try:
+            _save_secret(output, outcome.match.source)
+            saved = output
+        except OSError as exc:
+            save_error = exc.strerror or type(exc).__name__
+
+    if as_json:
+        _emit_json(outcome, saved=saved, save_error=save_error)
+    elif outcome.match is not None:
+        _render_found(outcome, saved=saved, save_error=save_error)
+    else:
+        _render_not_found(outcome)
+    # Found means the token is weak: exit 1 so CI gates fail on it.
+    raise SystemExit(1 if outcome.match is not None else 0)
 
 
 def _run_crack(
-    wordlist_path: str,
+    wordlist: Path,
     *,
+    wordlist_label: str,
     encoding: str,
     total_estimate: int,
     workers: int,
     alg: str,
-    header_b64: str,
-    payload_b64: str,
+    signing_input: bytes,
     signature: bytes,
-) -> tuple[tuple[str, int] | None, int, float]:
+) -> _Outcome:
     digest = SUPPORTED_ALGORITHMS[alg]().name
     start = time.perf_counter()
 
@@ -246,8 +233,8 @@ def _run_crack(
             progress.update(task, completed=done, rate=rate)
 
         result = find_secret(
-            _iter_candidates(wordlist_path, encoding),
-            signing_input=f"{header_b64}.{payload_b64}".encode(),
+            ((candidate, candidate.key) for candidate in iter_candidates(wordlist, encoding)),
+            signing_input=signing_input,
             signature=signature,
             digest=digest,
             workers=workers,
@@ -255,41 +242,67 @@ def _run_crack(
             on_progress=on_progress,
         )
 
-    elapsed = time.perf_counter() - start
-    if result.label is None or result.position is None:
-        return None, result.attempts, elapsed
-    return (result.label, result.position), result.attempts, elapsed
+    return _Outcome(
+        alg=alg,
+        encoding=encoding,
+        wordlist=wordlist_label,
+        total_estimate=total_estimate,
+        attempts=result.attempts,
+        elapsed=time.perf_counter() - start,
+        match=result.label,
+        position=result.position,
+    )
 
 
-def _render_found(
-    result: tuple[str, int],
-    alg: str,
-    total_estimate: int,
-    elapsed: float,
-    avg_rate: float,
-    *,
-    output: str | None,
-) -> None:
-    label, idx = result
+def _save_secret(path: Path, secret: bytes) -> None:
+    # The file holds a live credential, so only its owner may read it, even when
+    # it already existed with looser permissions.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        os.fchmod(fh.fileno(), 0o600)
+        fh.write(secret + b"\n")
+
+
+def _emit_json(outcome: _Outcome, *, saved: Path | None, save_error: str | None) -> None:
+    document: dict[str, object] = {
+        "schema_version": JSON_SCHEMA_VERSION,
+        "found": outcome.match is not None,
+        "algorithm": outcome.alg,
+        "wordlist": outcome.wordlist,
+        "encoding": outcome.encoding,
+        "candidates_tried": outcome.attempts,
+        "elapsed_seconds": round(outcome.elapsed, 6),
+    }
+    if outcome.match is not None and outcome.position is not None:
+        document["secret"] = outcome.match.source.decode("utf-8", errors="backslashreplace")
+        document["secret_encoding"] = outcome.match.encoding
+        document["position"] = outcome.position + 1
+        if saved is not None:
+            document["saved_to"] = str(saved)
+        if save_error is not None:
+            document["save_error"] = save_error
+    click.echo(json.dumps(document, indent=2))
+
+
+def _render_found(outcome: _Outcome, *, saved: Path | None, save_error: str | None) -> None:
+    assert outcome.match is not None and outcome.position is not None
     saved_line = ""
-    if output:
-        try:
-            with Path(output).open("w") as fout:
-                fout.write(label + "\n")
-            saved_line = f"\n[dim]Saved to         : {escape(output)}[/dim]"
-        except OSError as exc:
-            saved_line = f"\n[dim yellow]Could not save: {escape(str(exc))}[/dim yellow]"
+    if saved is not None:
+        saved_line = f"\n[dim]Saved to         : {escape(str(saved))}[/dim]"
+    elif save_error is not None:
+        saved_line = f"\n[dim yellow]Could not save   : {escape(save_error)}[/dim yellow]"
 
-    # Cracked = bad: the secret is dangerously weak.
     console.print(
         Panel(
-            f"[bold red]Secret:[/bold red] [bold yellow]{escape(label)}[/bold yellow]{saved_line}\n\n"
-            f"[dim]Algorithm        : {alg}[/dim]\n"
-            f"[dim]Position         : #{idx + 1} of ~{total_estimate:,} candidates[/dim]\n"
-            f"[dim]Candidates tried : {idx + 1:,}[/dim]\n"
-            f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
-            f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
-            "[bold red]This secret is in a common wordlist — it is not safe.[/bold red]\n"
+            f"[bold red]Secret:[/bold red] [bold yellow]{escape(outcome.match.label)}"
+            f"[/bold yellow]{saved_line}\n\n"
+            f"[dim]Algorithm        : {outcome.alg}[/dim]\n"
+            f"[dim]Position         : #{outcome.position + 1:,} of "
+            f"~{outcome.total_estimate:,} candidates[/dim]\n"
+            f"[dim]Candidates tried : {outcome.attempts:,}[/dim]\n"
+            f"[dim]Time elapsed     : {outcome.elapsed:.3f}s[/dim]\n"
+            f"[dim]Average rate     : {_format_rate(outcome.rate)}[/dim]\n\n"
+            "[bold red]This secret is in the wordlist, so it is not safe.[/bold red]\n"
             "[dim]Generate a strong secret with: jwt-toolkit generate-secret[/dim]",
             title="[bold red]Weak Secret Detected[/bold red]",
             border_style="red",
@@ -297,17 +310,17 @@ def _render_found(
     )
 
 
-def _render_not_found(alg: str, attempts: int, elapsed: float, avg_rate: float) -> None:
+def _render_not_found(outcome: _Outcome) -> None:
     console.print(
         Panel(
             "[bold green]Secret not found in this wordlist[/bold green]\n\n"
-            f"[dim]Algorithm        : {alg}[/dim]\n"
-            f"[dim]Candidates tried : {attempts:,}[/dim]\n"
-            f"[dim]Time elapsed     : {elapsed:.3f}s[/dim]\n"
-            f"[dim]Average rate     : {_format_rate(avg_rate)}[/dim]\n\n"
-            "[dim]This does not guarantee the secret is strong — a larger[/dim]\n"
-            "[dim]wordlist may still find it. Use jwt-toolkit generate-secret[/dim]\n"
-            "[dim]if you need a cryptographically strong secret.[/dim]",
+            f"[dim]Algorithm        : {outcome.alg}[/dim]\n"
+            f"[dim]Candidates tried : {outcome.attempts:,}[/dim]\n"
+            f"[dim]Time elapsed     : {outcome.elapsed:.3f}s[/dim]\n"
+            f"[dim]Average rate     : {_format_rate(outcome.rate)}[/dim]\n\n"
+            "[dim]This does not prove the secret is strong: a larger wordlist[/dim]\n"
+            "[dim]may still find it. Use jwt-toolkit generate-secret if you need[/dim]\n"
+            "[dim]a cryptographically strong secret.[/dim]",
             title="[bold green]Wordlist Check Passed[/bold green]",
             border_style="green",
         )

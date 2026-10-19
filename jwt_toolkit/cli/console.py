@@ -41,5 +41,6 @@ class _ConsoleProxy:
 console = _ConsoleProxy()
 # Errors go to stderr so a redirected result (`sign ... > token.jwt`) never captures them.
 err_console = _ConsoleProxy(stderr=True)
-# Progress, hints, and context lines: the non-essential output --quiet removes.
-status_console = _ConsoleProxy(mute_when_quiet=True)
+# Progress, hints, and context lines: the non-essential output --quiet removes. On
+# stderr so it never mixes into a result that is piped or parsed, such as --json.
+status_console = _ConsoleProxy(stderr=True, mute_when_quiet=True)

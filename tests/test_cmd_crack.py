@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 
 import pytest
 
@@ -208,7 +209,7 @@ def test_crack_without_wordlist_uses_bundled_list(runner):
 
 
 def test_crack_without_wordlist_and_no_bundled_list_exits_2(runner, monkeypatch):
-    monkeypatch.setattr("jwt_toolkit.commands.crack._bundled_wordlist", lambda: None)
+    monkeypatch.setattr("jwt_toolkit.commands.crack.bundled_wordlist", lambda: None)
     result = runner.invoke(cli, ["crack", make_token({"sub": "1"})])
     assert result.exit_code == 2
     assert "download-wordlists" in result.output
@@ -218,3 +219,87 @@ def test_crack_directory_wordlist_exits_2(runner, tmp_path):
     result = runner.invoke(cli, ["crack", make_token({"sub": "1"}), str(tmp_path)])
     assert result.exit_code == 2
     assert "Traceback" not in result.output
+
+
+def test_crack_json_reports_found_secret(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("wrong\ntestsecret\n")
+    result = invoke(runner, wl, make_token({"sub": "1"}), "--json")
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["found"] is True
+    assert document["secret"] == "testsecret"
+    assert document["secret_encoding"] == "utf-8"
+    assert document["position"] == 2
+    assert document["algorithm"] == "HS256"
+    assert document["candidates_tried"] >= 2
+
+
+def test_crack_json_reports_not_found(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("wrong\n")
+    result = invoke(runner, wl, make_token({"sub": "1"}), "--json")
+    assert result.exit_code == 0
+    document = json.loads(result.stdout)
+    assert document == {
+        "schema_version": "0.1",
+        "found": False,
+        "algorithm": "HS256",
+        "wordlist": str(wl),
+        "encoding": "utf-8",
+        "candidates_tried": 1,
+        "elapsed_seconds": document["elapsed_seconds"],
+    }
+
+
+def test_crack_json_error_for_empty_wordlist(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("\n")
+    result = invoke(runner, wl, make_token({"sub": "1"}), "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"] == "wordlist_empty"
+
+
+def test_crack_json_error_for_rs256_token(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("x\n")
+    result = invoke(runner, wl, make_rs256_token({"sub": "1"}), "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"] == "unsupported_algorithm"
+
+
+def test_crack_output_writes_the_wordlist_line_not_the_label(runner, tmp_path):
+    secret = bytes.fromhex("00ff10")
+    header = base64url_encode(b'{"alg":"HS256"}')
+    payload = base64url_encode(b"{}")
+    sig = hmac.new(secret, f"{header}.{payload}".encode(), hashlib.sha256).digest()
+    token = f"{header}.{payload}.{base64url_encode(sig)}"
+    wl = tmp_path / "wl.txt"
+    wl.write_text("00ff10\n")
+    out = tmp_path / "found.txt"
+    result = invoke(runner, wl, token, "--encoding", "hex", "--output", str(out))
+    assert result.exit_code == 1
+    assert out.read_bytes() == b"00ff10\n"
+
+
+def test_crack_output_file_is_owner_only(runner, tmp_path):
+    wl = tmp_path / "wl.txt"
+    wl.write_text("testsecret\n")
+    out = tmp_path / "found.txt"
+    out.write_text("old")
+    out.chmod(0o644)
+    invoke(runner, wl, make_token({"sub": "1"}), "--output", str(out))
+    assert out.stat().st_mode & 0o777 == 0o600
+    assert out.read_text() == "testsecret\n"
+
+
+def test_crack_output_keeps_non_utf8_secret_bytes(runner, tmp_path):
+    secret = b"caf\xe9"
+    header = base64url_encode(b'{"alg":"HS256"}')
+    payload = base64url_encode(b"{}")
+    sig = hmac.new(secret, f"{header}.{payload}".encode(), hashlib.sha256).digest()
+    wl = tmp_path / "wl.txt"
+    wl.write_bytes(secret + b"\n")
+    out = tmp_path / "found.txt"
+    invoke(runner, wl, f"{header}.{payload}.{base64url_encode(sig)}", "--output", str(out))
+    assert out.read_bytes() == secret + b"\n"

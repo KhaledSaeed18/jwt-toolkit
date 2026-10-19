@@ -17,9 +17,9 @@ MIN_PARALLEL_CANDIDATES = 50_000
 
 
 @dataclass(frozen=True)
-class CrackResult:
-    # Display label of the matching candidate, or None when nothing matched.
-    label: str | None
+class CrackResult[L]:
+    # Label of the matching candidate as the caller supplied it, or None when nothing matched.
+    label: L | None
     # Zero-based position of the match in candidate order.
     position: int | None
     # Number of candidates actually tested.
@@ -34,8 +34,8 @@ def _scan(keys: list[bytes], signing_input: bytes, signature: bytes, digest: str
     return -1
 
 
-def find_secret(
-    candidates: Iterable[tuple[str, bytes]],
+def find_secret[L](
+    candidates: Iterable[tuple[L, bytes]],
     *,
     signing_input: bytes,
     signature: bytes,
@@ -44,7 +44,7 @@ def find_secret(
     batch_size: int = DEFAULT_BATCH_SIZE,
     parallel: bool | None = None,
     on_progress: Callable[[int], None] | None = None,
-) -> CrackResult:
+) -> CrackResult[L]:
     # `digest` is a hashlib name ("sha256"). `parallel=None` picks processes
     # only when workers > 1; callers that know the list is small pass False.
     batches = batched(candidates, batch_size, strict=False)
@@ -67,14 +67,14 @@ def find_secret(
     )
 
 
-def _find_serial(
-    batches: Iterator[tuple[tuple[str, bytes], ...]],
+def _find_serial[L](
+    batches: Iterator[tuple[tuple[L, bytes], ...]],
     *,
     signing_input: bytes,
     signature: bytes,
     digest: str,
     on_progress: Callable[[int], None] | None,
-) -> CrackResult:
+) -> CrackResult[L]:
     attempts = 0
     for batch in batches:
         index = _scan([key for _, key in batch], signing_input, signature, digest)
@@ -88,22 +88,22 @@ def _find_serial(
     return CrackResult(label=None, position=None, attempts=attempts)
 
 
-def _find_parallel(
-    batches: Iterator[tuple[tuple[str, bytes], ...]],
+def _find_parallel[L](
+    batches: Iterator[tuple[tuple[L, bytes], ...]],
     *,
     signing_input: bytes,
     signature: bytes,
     digest: str,
     workers: int,
     on_progress: Callable[[int], None] | None,
-) -> CrackResult:
+) -> CrackResult[L]:
     # Keeps a bounded number of batches in flight so memory stays flat. When a
     # match is found, batches that start earlier are still awaited, so the
     # result is always the first match in candidate order.
-    pending: dict[Future[int], tuple[int, list[str]]] = {}
+    pending: dict[Future[int], tuple[int, list[L]]] = {}
     next_start = 0
     attempts = 0
-    found: tuple[str, int] | None = None
+    found: tuple[L, int] | None = None
     exhausted = False
 
     pool = ProcessPoolExecutor(max_workers=workers)
