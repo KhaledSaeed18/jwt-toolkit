@@ -1,6 +1,8 @@
+import http.client
 import ssl
 import urllib.error
 from importlib.metadata import version
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from jwt_toolkit.cli import cli
@@ -121,3 +123,53 @@ def test_markup_in_source_and_path_is_shown_literally(runner, tmp_path):
     assert result.exit_code == 0
     assert "https://e.x/[/x]" in result.output
     assert "[red]" in result.output
+
+
+def test_failed_checksum_with_force_keeps_the_existing_copy(runner, tmp_path):
+    dest = tmp_path / "common-secrets.txt"
+    dest.write_text("good copy\n")
+    with patch(
+        "jwt_toolkit.commands.download_wordlists._open_url",
+        return_value=_mock_response(b"tampered\n"),
+    ):
+        result = invoke(runner, "--output-dir", str(tmp_path), "--force")
+    assert result.exit_code == 2
+    assert "Integrity check failed" in result.stderr
+    assert dest.read_text() == "good copy\n"
+    assert list(tmp_path.iterdir()) == [dest]
+
+
+def test_matching_checksum_from_default_url_is_saved(runner, tmp_path):
+    content = (Path(__file__).parents[1] / "wordlists" / "common-secrets.txt").read_bytes()
+    with patch(
+        "jwt_toolkit.commands.download_wordlists._open_url", return_value=_mock_response(content)
+    ):
+        result = invoke(runner, "--output-dir", str(tmp_path))
+    assert result.exit_code == 0
+    assert (tmp_path / "common-secrets.txt").read_bytes() == content
+    assert "Checksum" in result.stdout
+
+
+def test_interrupted_download_leaves_no_partial_file(runner, tmp_path):
+    response = _mock_response(b"")
+    response.read.side_effect = [b"partial", http.client.IncompleteRead(b"")]
+    with patch("jwt_toolkit.commands.download_wordlists._open_url", return_value=response):
+        result = invoke(runner, "--output-dir", str(tmp_path), "--source", "https://e.x/wl")
+    assert result.exit_code == 1
+    assert "interrupted" in result.stderr
+    assert list(tmp_path.iterdir()) == []
+    response.close.assert_called_once()
+
+
+def test_unsupported_source_scheme_exits_2(runner, tmp_path):
+    result = invoke(runner, "--output-dir", str(tmp_path), "--source", "ftp://e.x/wl")
+    assert result.exit_code == 2
+    assert "not supported" in result.stderr
+
+
+def test_single_entry_is_reported_in_the_singular(runner, tmp_path):
+    with patch(
+        "jwt_toolkit.commands.download_wordlists._open_url", return_value=_mock_response(b"a\n")
+    ):
+        result = invoke(runner, "--output-dir", str(tmp_path), "--source", "https://e.x/wl")
+    assert "1 line\n" in result.stdout or "1 line " in result.stdout

@@ -1,6 +1,11 @@
 import hashlib
+import hmac
+import http.client
+import os
 import ssl
+import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -18,7 +23,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from jwt_toolkit.cli.console import console, status_console
+from jwt_toolkit.cli.console import console, err_console, status_console
 from jwt_toolkit.cli.panels import print_error, print_success
 
 # Download command — fetches the common-secrets wordlist for this release from the jwt-toolkit repo.
@@ -39,6 +44,8 @@ _WORDLIST_URL = (
 )
 _FILENAME = "common-secrets.txt"
 
+_PERMITTED_SOURCE_SCHEMES = frozenset({"https", "http", "file"})
+
 # SHA-256 of the bundled wordlist at _WORDLIST_URL. Verified against local copy.
 # Only used when downloading from the default URL; custom --source URLs skip this check.
 _WORDLIST_SHA256 = "1b4bae820e98073b7148412425ea27e00cd1c4d0900ad446bdae146665ea758a"
@@ -46,53 +53,74 @@ _WORDLIST_SHA256 = "1b4bae820e98073b7148412425ea27e00cd1c4d0900ad446bdae146665ea
 
 def _open_url(url: str):
     # Certificate failures must stay fatal: there is no unverified fallback.
-    return urllib.request.urlopen(url, timeout=30)
+    return urllib.request.urlopen(url, timeout=30)  # nosec B310 - scheme checked by the caller
 
 
-def _download(url: str, dest: Path) -> int:
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold]common-secrets.txt[/bold]"),
-        BarColumn(),
-        DownloadColumn(),
-        TransferSpeedColumn(),
-        TimeRemainingColumn(),
-        TimeElapsedColumn(),
-        console=status_console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
-        transient=True,
-    ) as progress:
-        try:
-            response = _open_url(url)
-        except urllib.error.HTTPError as exc:
-            raise click.ClickException(f"HTTP {exc.code} {exc.reason}: {url}") from exc
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, ssl.SSLCertVerificationError):
-                raise click.ClickException(
-                    "TLS certificate verification failed, the download cannot be trusted. "
-                    "If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle."
-                ) from exc
-            raise click.ClickException(f"Network error: {exc.reason}") from exc
+class _DownloadError(Exception):
+    def __init__(self, headline: str, *details: str) -> None:
+        super().__init__(headline)
+        self.headline = headline
+        self.details = details
 
-        content_length = response.headers.get("Content-Length")
-        total = int(content_length) if content_length else None
-        task = progress.add_task("Downloading…", total=total)
 
-        written = 0
-        try:
-            with dest.open("wb") as f:
-                while True:
-                    chunk = response.read(65_536)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    written += len(chunk)
-                    progress.update(task, advance=len(chunk))
-        except KeyboardInterrupt:
-            dest.unlink(missing_ok=True)
-            console.print("\n[yellow]Download cancelled[/yellow]")
-            raise SystemExit(1) from None
+def _download(url: str, dest_dir: Path) -> tuple[Path, int]:
+    # Streams into a temporary file beside the destination, so a failed or
+    # interrupted download never replaces (or deletes) a good existing copy.
+    try:
+        response = _open_url(url)
+    except urllib.error.HTTPError as exc:
+        raise _DownloadError(f"The server answered HTTP {exc.code} {exc.reason}", url) from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ssl.SSLCertVerificationError):
+            raise _DownloadError(
+                "TLS certificate verification failed, the download cannot be trusted",
+                "If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle.",
+            ) from exc
+        raise _DownloadError("Could not reach the download source", str(exc.reason)) from exc
+    except (OSError, ValueError) as exc:
+        raise _DownloadError("Could not reach the download source", str(exc)) from exc
 
-    return written
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{_FILENAME}.", suffix=".part", dir=dest_dir)
+    except OSError:
+        response.close()
+        raise
+    tmp = Path(tmp_name)
+    written = 0
+    try:
+        with (
+            os.fdopen(fd, "wb") as f,
+            Progress(
+                SpinnerColumn(),
+                TextColumn("[bold]common-secrets.txt[/bold]"),
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+                TimeRemainingColumn(),
+                TimeElapsedColumn(),
+                console=status_console,  # type: ignore[arg-type]  # _ConsoleProxy duck-types Console
+                transient=True,
+            ) as progress,
+        ):
+            content_length = response.headers.get("Content-Length")
+            task = progress.add_task(
+                "Downloading…", total=int(content_length) if content_length else None
+            )
+            while chunk := response.read(65_536):
+                f.write(chunk)
+                written += len(chunk)
+                progress.update(task, advance=len(chunk))
+    except (OSError, http.client.HTTPException) as exc:
+        tmp.unlink(missing_ok=True)
+        raise _DownloadError(
+            "The download was interrupted", str(exc) or type(exc).__name__
+        ) from exc
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    finally:
+        response.close()
+    return tmp, written
 
 
 def _sha256(path: Path) -> str:
@@ -177,28 +205,40 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
         return
 
     if source:
+        scheme = urllib.parse.urlparse(source).scheme
+        if scheme not in _PERMITTED_SOURCE_SCHEMES:
+            print_error(
+                f"--source scheme {scheme!r} is not supported",
+                "Use an https://, http://, or file:// URL.",
+                title="Invalid Input",
+            )
+            raise SystemExit(2)
         status_console.print(f"[dim]Source   : {escape(url)}[/dim]")
     status_console.print(f"[dim]Saving to: {escape(str(dest))}[/dim]")
 
     try:
-        written = _download(url, dest)
-    except click.ClickException:
-        raise
+        tmp, written = _download(url, dest_dir)
+    except KeyboardInterrupt:
+        err_console.print("[yellow]Download cancelled[/yellow]")
+        raise SystemExit(1) from None
+    except _DownloadError as exc:
+        print_error(exc.headline, *exc.details, title="Download Failed")
+        raise SystemExit(1) from exc
     except OSError as exc:
         print_error(
-            "Could not write file",
-            f"Path  : {dest}",
-            f"Error : {exc}",
+            "Could not write the wordlist",
+            f"Path  : {dest_dir}",
+            f"Error : {exc.strerror or type(exc).__name__}",
             title="Write Error",
         )
         raise SystemExit(2) from exc
 
     if verify_integrity:
-        actual = _sha256(dest)
-        if actual != _WORDLIST_SHA256:
-            dest.unlink(missing_ok=True)
+        actual = _sha256(tmp)
+        if not hmac.compare_digest(actual, _WORDLIST_SHA256):
+            tmp.unlink(missing_ok=True)
             print_error(
-                "Integrity check failed — file deleted",
+                "Integrity check failed, the download was discarded",
                 f"Expected : {_WORDLIST_SHA256}",
                 f"Got      : {actual}",
                 "The downloaded file does not match the pinned checksum.",
@@ -209,13 +249,14 @@ def download_wordlists(output_dir: str, force: bool, source: str | None):
             )
             raise SystemExit(2)
 
+    tmp.replace(dest)
     lines = _count_lines(dest)
 
     print_success(
         _FILENAME,
         f"Saved to : {dest}",
         f"Size     : {_fmt_bytes(written)}",
-        f"Entries  : {lines:,} lines",
+        f"Entries  : {lines:,} {'line' if lines == 1 else 'lines'}",
         *([f"Checksum : {_WORDLIST_SHA256}  ✓"] if verify_integrity else []),
         title="[bold green]Downloaded[/bold green]",
         footer=(
