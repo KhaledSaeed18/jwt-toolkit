@@ -10,9 +10,19 @@ from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
-from jwt_toolkit.core.auditor import Grade, Report, Severity, run_audit
+from jwt_toolkit.cli.wordlists import bundled_wordlist
+from jwt_toolkit.core.auditor import (
+    Finding,
+    Grade,
+    Report,
+    Severity,
+    audit_hmac_secret,
+    audit_public_key,
+    run_audit,
+)
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
+from jwt_toolkit.core.wordlist import contains_secret
 
 # Audit command — decodes a JWT, runs the security auditor, and emits a verdict.
 # Static checks only by default; --secret adds live signature verification.
@@ -92,12 +102,6 @@ def audit(
         )
         raise SystemExit(2) from exc
 
-    token = resolve_token(token, as_json=as_json)
-    decoded = safe_decode(token, as_json=as_json)
-    required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
-    report = run_audit(decoded.header, decoded.payload, required_claims=required)
-    exit_code = _resolve_exit_code(report, strict=strict)
-
     if secret is not None and public_key_path is not None:
         emit_error(
             code="invalid_key_options",
@@ -107,11 +111,28 @@ def audit(
         )
         raise SystemExit(2)
 
+    token = resolve_token(token, as_json=as_json)
+    decoded = safe_decode(token, as_json=as_json)
+    required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
+
     sig_result: tuple[bool, str] | None = None
+    key_findings: list[Finding] = []
     if secret is not None or public_key_path is not None:
         sig_result = _check_signature(decoded, secret=secret, public_key_path=public_key_path)
-        if not sig_result[0]:
-            exit_code = max(exit_code, 1)
+        key_findings = _audit_key_material(
+            decoded, secret=secret, public_key_path=public_key_path, verified=sig_result[0]
+        )
+
+    report = run_audit(
+        decoded.header,
+        decoded.payload,
+        required_claims=required,
+        signature=decoded.signature,
+        key_findings=key_findings,
+    )
+    exit_code = _resolve_exit_code(report, strict=strict)
+    if sig_result is not None and not sig_result[0]:
+        exit_code = max(exit_code, 1)
 
     if as_json:
         _emit_json(
@@ -159,6 +180,21 @@ def _check_signature(
     if valid:
         return (True, "Signature is valid")
     return (False, "Signature is invalid — wrong key or tampered token")
+
+
+def _audit_key_material(
+    decoded, *, secret: str | None, public_key_path: Path | None, verified: bool
+) -> list[Finding]:
+    if public_key_path is not None:
+        return audit_public_key(public_key_path.read_bytes())
+    alg = decoded.header.get("alg")
+    # A secret that does not verify the token is not its key; judging it says nothing.
+    if secret is None or not verified or not isinstance(alg, str) or not is_hmac(alg):
+        return []
+    secret_bytes = secret.encode()
+    wordlist = bundled_wordlist()
+    in_wordlist = wordlist is not None and contains_secret(wordlist, secret_bytes)
+    return audit_hmac_secret(secret_bytes, alg, in_common_wordlist=in_wordlist)
 
 
 def _resolve_exit_code(report: Report, *, strict: bool) -> int:
@@ -282,11 +318,11 @@ def _render_footer(report: Report) -> Panel | None:
     hints: list[str] = []
     fields = {f.field for f in report.findings if f.severity in (Severity.CRITICAL, Severity.WARN)}
 
-    if "alg" in fields:
+    if fields & {"alg", "secret"}:
         hints.append(
             "[dim]Test the HMAC secret strength : [/dim]jwt-toolkit crack <token> <wordlist>"
         )
-    if fields & {"alg", "exp", "kid", "jwk", "jku", "x5u"}:
+    if fields & {"alg", "secret", "exp", "kid", "jwk", "jku", "x5u"}:
         hints.append("[dim]Generate a strong secret      : [/dim]jwt-toolkit generate-secret")
 
     if not hints:

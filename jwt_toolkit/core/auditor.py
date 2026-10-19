@@ -4,6 +4,11 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
+
 from jwt_toolkit.core.crypto import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, canonical_algorithm
 
@@ -25,6 +30,12 @@ _LIFETIME_TIERS: tuple[tuple[int, str], ...] = (
 
 # Small clock-skew leeway when judging "iat in the future" — most systems drift a bit.
 _IAT_FUTURE_LEEWAY_SECONDS = 60
+
+# RFC 7518 3.2: an HMAC key must be at least as long as the hash output.
+_MIN_HMAC_SECRET_BYTES = {"HS256": 32, "HS384": 48, "HS512": 64}
+
+# NIST SP 800-131A disallows RSA keys under 2048 bits for signatures.
+_MIN_RSA_KEY_BITS = 2048
 
 # Header parameters that smuggle a key into the token itself.
 # An attacker who controls these can sometimes coerce the verifier into trusting their key.
@@ -118,10 +129,18 @@ def run_audit(
     payload: dict,
     *,
     required_claims: frozenset[str] = frozenset(),
+    signature: str | None = None,
+    key_findings: Iterable[Finding] = (),
 ) -> Report:
+    # `signature` enables the stripped-signature check; `key_findings` come from
+    # audit_hmac_secret / audit_public_key when the caller supplied key material.
     findings = tuple(
         sorted(
-            audit(header, payload, required_claims=required_claims),
+            [
+                *audit(header, payload, required_claims=required_claims),
+                *_audit_signature(header, signature),
+                *key_findings,
+            ],
             key=_finding_sort_key,
         )
     )
@@ -152,6 +171,7 @@ def audit(
     findings.extend(_audit_iat(payload))
     findings.extend(_audit_jti(payload, required="jti" in required_claims))
     findings.extend(_audit_claims(payload, required_claims=required_claims))
+    findings.extend(_audit_claim_types(payload))
     findings.extend(_audit_sensitive_fields(payload))
     findings.extend(_audit_sensitive_values(payload))
     return findings
@@ -308,7 +328,10 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
                 )
             )
             continue
-        # jku, x5u, x5c — URLs to remote key material.
+        if name == "x5c":
+            findings.append(_audit_x5c(value))
+            continue
+        # jku and x5u point at remote key material.
         url = str(value) if not isinstance(value, list) else (value[0] if value else "")
         if isinstance(url, str) and url.lower().startswith("http://"):
             findings.append(
@@ -329,6 +352,24 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
                 )
             )
     return findings
+
+
+def _audit_x5c(value: object) -> Finding:
+    # RFC 7515 4.1.6: x5c embeds the signer's certificate chain in the token itself.
+    if not isinstance(value, list) or not value or not all(isinstance(c, str) for c in value):
+        return Finding(
+            Severity.WARN,
+            "x5c",
+            "x5c header is malformed: RFC 7515 requires a non-empty list of certificates",
+            "Reject the token; a malformed x5c cannot be validated.",
+        )
+    return Finding(
+        Severity.WARN,
+        "x5c",
+        "Header embeds a certificate chain (x5c): a verifier that trusts it without "
+        "validating the chain to a pinned root accepts any key the sender chooses",
+        "Validate x5c against a pinned trust anchor, or ignore it and resolve keys server-side.",
+    )
 
 
 # Cross-check: HS* algorithm combined with header-supplied key material is the
@@ -545,6 +586,46 @@ def _audit_claims(
     return findings
 
 
+def _audit_claim_types(payload: dict) -> list[Finding]:
+    # RFC 7519 4.1.1-4.1.3: iss and sub are StringOrURI; aud is one or a list of them.
+    findings: list[Finding] = []
+    for claim in ("iss", "sub"):
+        if claim in payload and not isinstance(payload[claim], str):
+            findings.append(
+                Finding(
+                    Severity.WARN,
+                    claim,
+                    f"{claim} is a {_json_type(payload[claim])}, but RFC 7519 requires a string",
+                    "Emit the claim as a string; verifiers may compare it unpredictably.",
+                )
+            )
+    aud = payload.get("aud")
+    if "aud" in payload and not (
+        isinstance(aud, str) or (isinstance(aud, list) and all(isinstance(a, str) for a in aud))
+    ):
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "aud",
+                f"aud is a {_json_type(aud)}, but RFC 7519 requires a string or a list of strings",
+                "Emit aud as a string or a list of strings so audience checks match it.",
+            )
+        )
+    return findings
+
+
+def _json_type(value: object) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, list):
+        return "list" if all(isinstance(v, str) for v in value) else "list with non-strings"
+    if value is None:
+        return "null"
+    return "object" if isinstance(value, dict) else "string"
+
+
 def _audit_sensitive_fields(payload: dict) -> list[Finding]:
     return [
         Finding(
@@ -631,3 +712,78 @@ def _looks_like_card(digits: str) -> bool:
                 n -= 9
         total += n
     return total % 10 == 0
+
+
+def _audit_signature(header: dict, signature: str | None) -> list[Finding]:
+    # A signed algorithm with nothing after the last dot is a stripped signature.
+    if signature is None or signature:
+        return []
+    alg = header.get("alg")
+    if isinstance(alg, str) and alg.upper() == "NONE":
+        return []
+    return [
+        Finding(
+            Severity.CRITICAL,
+            "signature",
+            f"alg is {alg!r} but the token carries no signature (stripped-signature attack shape)",
+            "The verifier must reject any token whose signature is missing.",
+        )
+    ]
+
+
+# Key-material checks. Messages describe the key; they never include secret material.
+
+
+def audit_hmac_secret(secret: bytes, alg: str, *, in_common_wordlist: bool) -> list[Finding]:
+    findings: list[Finding] = []
+    if in_common_wordlist:
+        findings.append(
+            Finding(
+                Severity.CRITICAL,
+                "secret",
+                "The HMAC secret is in the bundled common-secrets wordlist, so anyone "
+                "can forge tokens",
+                "Rotate it now to a random secret: jwt-toolkit generate-secret",
+            )
+        )
+    minimum = _MIN_HMAC_SECRET_BYTES.get(alg)
+    if minimum is not None and len(secret) < minimum:
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "secret",
+                f"The HMAC secret is {len(secret)} bytes; RFC 7518 3.2 requires at least "
+                f"{minimum} bytes for {alg}",
+                f"Use a random secret of at least {minimum * 8} bits: "
+                f"jwt-toolkit generate-secret --bits {minimum * 8}",
+            )
+        )
+    if not findings:
+        findings.append(Finding(Severity.PASS, "secret", "HMAC secret length meets RFC 7518 3.2"))
+    return findings
+
+
+def audit_public_key(pem: bytes) -> list[Finding]:
+    # Size is the one property a verifier's key can be judged on statically.
+    key: PublicKeyTypes
+    try:
+        if b"-----BEGIN CERTIFICATE-----" in pem:
+            key = x509.load_pem_x509_certificate(pem).public_key()
+        else:
+            key = serialization.load_pem_public_key(pem)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(key, rsa.RSAPublicKey):
+        return []
+    if key.key_size < _MIN_RSA_KEY_BITS:
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "key",
+                f"RSA key is {key.key_size} bits; keys under {_MIN_RSA_KEY_BITS} bits are "
+                "considered breakable (NIST SP 800-131A)",
+                f"Issue a new RSA key of at least {_MIN_RSA_KEY_BITS} bits, or move to ES256 "
+                "or Ed25519.",
+            )
+        ]
+    return [Finding(Severity.PASS, "key", f"RSA key is {key.key_size} bits")]
