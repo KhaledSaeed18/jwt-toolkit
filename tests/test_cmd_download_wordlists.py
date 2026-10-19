@@ -173,3 +173,12 @@ def test_single_entry_is_reported_in_the_singular(runner, tmp_path):
     ):
         result = invoke(runner, "--output-dir", str(tmp_path), "--source", "https://e.x/wl")
     assert "1 line\n" in result.stdout or "1 line " in result.stdout
+
+
+def test_network_error_names_the_reason_without_errno(runner, tmp_path):
+    error = urllib.error.URLError(OSError(8, "nodename nor servname provided"))
+    with patch("jwt_toolkit.commands.download_wordlists._open_url", side_effect=error):
+        result = invoke(runner, "--output-dir", str(tmp_path), "--source", "https://e.x/wl")
+    assert result.exit_code == 1
+    assert "nodename nor servname provided" in result.stderr
+    assert "Errno" not in result.stderr

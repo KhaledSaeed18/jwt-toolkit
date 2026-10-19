@@ -75,7 +75,8 @@ def _download(url: str, dest_dir: Path) -> tuple[Path, int]:
                 "TLS certificate verification failed, the download cannot be trusted",
                 "If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle.",
             ) from exc
-        raise _DownloadError("Could not reach the download source", str(exc.reason)) from exc
+        reason = getattr(exc.reason, "strerror", None) or str(exc.reason)
+        raise _DownloadError("Could not reach the download source", reason) from exc
     except (OSError, ValueError) as exc:
         raise _DownloadError("Could not reach the download source", str(exc)) from exc
 
