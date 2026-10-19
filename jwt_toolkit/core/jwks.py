@@ -10,11 +10,9 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 from jwt_toolkit.core.crypto import canonical_algorithm
 from jwt_toolkit.core.encoding import base64url_decode
 
-# JWKS module — resolve a verification key from a JSON Web Key Set (RFC 7517).
-#
-# The fetch helper is intentionally thin: stdlib urllib only, with a fixed
+# RFC 7517 key sets. The fetch helper is intentionally thin: stdlib urllib only, with a fixed
 # timeout. Callers (and the audit module) are responsible for trust decisions
-# such as host allow-listing — this module just retrieves and parses.
+# such as host allow-listing; this module just retrieves and parses.
 
 JWKS_FETCH_TIMEOUT_SECONDS = 10
 
@@ -120,7 +118,7 @@ def select_jwk(jwks: dict, *, kid: str | None, alg: str) -> dict:
         raise ValueError(f"No JWKS key matches kid={kid!r}")
     if len(candidates) > 1:
         # Ambiguity is a configuration bug — refusing it is safer than guessing.
-        raise ValueError(f"Multiple JWKS keys match kid={kid!r} — JWKS is ambiguous")
+        raise ValueError(f"Multiple JWKS keys match kid={kid!r}: JWKS is ambiguous")
 
     chosen = candidates[0]
     _ensure_jwk_is_for_signatures(chosen)
@@ -166,9 +164,6 @@ def resolve_jwks_key(
     return jwk_to_public_pem(jwk, alg)
 
 
-# Internal helpers
-
-
 def _filter_by_kid(keys: list, kid: str | None) -> list:
     # If the token names a kid, require an exact match. If it does not, only
     # an unambiguous single-key JWKS is acceptable — falling back to "guess
@@ -177,7 +172,7 @@ def _filter_by_kid(keys: list, kid: str | None) -> list:
         return [k for k in keys if isinstance(k, dict) and k.get("kid") == kid]
     if len(keys) != 1:
         raise ValueError(
-            "Token header has no kid and JWKS contains multiple keys — refusing to guess"
+            "Token header has no kid and JWKS contains multiple keys: refusing to guess"
         )
     if not isinstance(keys[0], dict):
         raise ValueError("JWKS key is not a JSON object")

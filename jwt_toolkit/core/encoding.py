@@ -3,8 +3,7 @@ import binascii
 import json
 import math
 
-# base64url encode/decode helpers — JWT strips '=' padding by spec, so every
-# encode trims it and every decode restores it.
+# JWT strips '=' padding by spec, so every encode trims it and every decode restores it.
 
 
 def _pad(value: str) -> str:

@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.encoding import base64url_encode
 
-# Forge module — produces defensive test-case variants of a user's JWT.
-#
 # Every variant in this module is designed to be REJECTED by a correctly
 # configured verifier. The caller's job is to feed each variant at their
 # verifier and confirm rejection. If any variant is accepted, the verifier
@@ -110,7 +108,7 @@ def forge_one(
         )
     if name in KEY_BASED_VARIANT_NAMES and public_key_pem is None:
         raise ValueError(
-            f"Variant {name!r} requires --public-key — it forges using the "
+            f"Variant {name!r} requires --public-key: it forges using the "
             "verifier's own public key as an HMAC secret."
         )
     if name in KEY_BASED_VARIANT_NAMES and b"PRIVATE KEY" in (public_key_pem or b""):
@@ -119,16 +117,10 @@ def forge_one(
     return builder(decoded, public_key_pem)
 
 
-# Individual variant builders.
-#
-# Each builder takes the original DecodedToken and an optional public-key PEM.
-# It returns a Variant whose `token` is the forged JWT string.
-
-
 def _build_alg_none_lower(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     return Variant(
         name="alg_none_lower",
-        description="alg:none with the signature stripped — verifier must reject unsigned tokens",
+        description="alg:none with the signature stripped: verifier must reject unsigned tokens",
         cve=_CVE_ALG_NONE,
         token=_emit(_with_alg(decoded.header, "none"), decoded.payload, signature=""),
     )
@@ -137,7 +129,7 @@ def _build_alg_none_lower(decoded: DecodedToken, _pem: bytes | None) -> Variant:
 def _build_alg_none_upper(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     return Variant(
         name="alg_none_upper",
-        description="alg:NONE — case-variant bypass when the verifier normalises before checking",
+        description="alg:NONE: case-variant bypass when the verifier normalises before checking",
         cve=_CVE_ALG_NONE,
         token=_emit(_with_alg(decoded.header, "NONE"), decoded.payload, signature=""),
     )
@@ -146,7 +138,7 @@ def _build_alg_none_upper(decoded: DecodedToken, _pem: bytes | None) -> Variant:
 def _build_alg_none_mixed(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     return Variant(
         name="alg_none_mixed",
-        description="alg:nOnE — mixed-case bypass against ad-hoc string comparisons",
+        description="alg:nOnE: mixed-case bypass against ad-hoc string comparisons",
         cve=_CVE_ALG_NONE,
         token=_emit(_with_alg(decoded.header, "nOnE"), decoded.payload, signature=""),
     )
@@ -166,7 +158,7 @@ def _build_kid_path_traversal(decoded: DecodedToken, _pem: bytes | None) -> Vari
     return Variant(
         name="kid_path_traversal",
         description=(
-            f"kid={_KID_PATH_TRAVERSAL_VALUE!r} — verifier must not concatenate kid into a file path."
+            f"kid={_KID_PATH_TRAVERSAL_VALUE!r}: verifier must not concatenate kid into a file path."
             f"{_HEADER_ONLY_NOTE}"
         ),
         cve=None,
@@ -180,7 +172,7 @@ def _build_kid_sql_injection(decoded: DecodedToken, _pem: bytes | None) -> Varia
     return Variant(
         name="kid_sql_injection",
         description=(
-            f"kid={_KID_SQL_INJECTION_VALUE!r} — verifier must not concatenate kid into a SQL query."
+            f"kid={_KID_SQL_INJECTION_VALUE!r}: verifier must not concatenate kid into a SQL query."
             f"{_HEADER_ONLY_NOTE}"
         ),
         cve=None,
@@ -194,7 +186,7 @@ def _build_jku_attacker(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     return Variant(
         name="jku_attacker",
         description=(
-            f"jku={_JKU_ATTACKER_URL} — verifier must pin jku to an allow-list, not blindly fetch."
+            f"jku={_JKU_ATTACKER_URL}: verifier must pin jku to an allow-list, not blindly fetch."
             f"{_HEADER_ONLY_NOTE}"
         ),
         cve=None,
@@ -208,7 +200,7 @@ def _build_jwk_embedded(decoded: DecodedToken, _pem: bytes | None) -> Variant:
     return Variant(
         name="jwk_embedded",
         description=(
-            "JWK embedded in header — verifier must never trust header-supplied keys."
+            "JWK embedded in header: verifier must never trust header-supplied keys."
             f"{_HEADER_ONLY_NOTE}"
         ),
         cve=_CVE_JWK_INJECTION,
@@ -223,7 +215,7 @@ def _build_tampered_payload(decoded: DecodedToken, _pem: bytes | None) -> Varian
         name="tampered_payload",
         description=(
             "Payload mutated to add admin claims while preserving the original "
-            "signature — verifier must recompute and compare the signature"
+            "signature: verifier must recompute and compare the signature"
         ),
         cve=None,
         token=_emit(decoded.header, new_payload, signature=decoded.signature),
@@ -244,7 +236,7 @@ def _build_hs_rs_confusion(decoded: DecodedToken, pem: bytes | None) -> Variant:
     return Variant(
         name="hs_rs_confusion",
         description=(
-            "alg switched to HS256 and signed with the public key as the HMAC secret — "
+            "alg switched to HS256 and signed with the public key as the HMAC secret: "
             "verifier must pin one algorithm family per key"
         ),
         cve=_CVE_HS_RS_CONFUSION,
@@ -264,9 +256,6 @@ _BUILDERS = {
     "tampered_payload": _build_tampered_payload,
     "hs_rs_confusion": _build_hs_rs_confusion,
 }
-
-
-# Helpers
 
 
 def _with_alg(header: dict, alg: str) -> dict:

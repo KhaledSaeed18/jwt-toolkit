@@ -17,7 +17,7 @@ def ensure_hmac_algorithm(header: dict, *, action: str) -> str:
             headline=(
                 "Token uses alg: none, it has no signature to verify"
                 if action == "verify"
-                else "Token uses alg: none — there is no signature to crack"
+                else "Token uses alg: none, there is no signature to crack"
             ),
             details=(
                 (

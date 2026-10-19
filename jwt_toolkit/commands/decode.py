@@ -12,8 +12,6 @@ from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.core.timestamps import describe_time_claims
 
-# Decode command — pretty-print the header and payload of a JWT without audit noise.
-
 
 @click.command(help="Decode a JWT and pretty-print its header and payload.")
 @click.argument("token")

@@ -77,6 +77,6 @@ def generate_secret(bits: int, encoding: str, raw: bool):
         output,
         f"Encoding : {encoding}",
         f"Length   : {bits} bits ({bits // 8} bytes)",
-        f"Entropy  : {bits} bits — {_strength_for(bits)}",
+        f"Entropy  : {bits} bits ({_strength_for(bits)})",
         title="Generated Secret",
     )

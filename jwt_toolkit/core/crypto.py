@@ -15,9 +15,6 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 from jwt_toolkit.core.encoding import base64url_decode, base64url_encode
 from jwt_toolkit.core.errors import KeyPassphraseRequiredError
 
-# Crypto module — signing and verification for the JWS algorithms we support.
-# HMAC lives at the top of the module; asymmetric primitives follow.
-
 # HMAC algorithms — symmetric, shared-secret. Kept as a dict so `crack` can iterate
 # `(alg, digestmod)` directly. Public API: do not rename.
 SUPPORTED_ALGORITHMS = {
@@ -94,9 +91,6 @@ _EC_RAW_SIG_HALF_BYTES = {
 }
 
 
-# HMAC sign and verify — public API unchanged.
-
-
 def sign(header_b64: str, payload_b64: str, secret: str, alg: str = "HS256") -> str:
     digestmod = SUPPORTED_ALGORITHMS.get(alg.upper())
     if digestmod is None:
@@ -118,8 +112,6 @@ def verify_signature(
     return hmac.compare_digest(expected.encode(), signature.encode("utf-8", "surrogatepass"))
 
 
-# Asymmetric sign and verify.
-#
 # Keys are supplied as PEM bytes so callers don't need to import cryptography
 # types. Errors are normalised to `ValueError` so the CLI layer can render them
 # uniformly without catching library-specific exception classes.
@@ -169,10 +161,6 @@ def verify_asymmetric(
     except (InvalidSignature, ValueError):
         return False
     return True
-
-
-# Internal helpers — kept private so the dispatch shape can change without
-# breaking importers.
 
 
 def algorithm_for_private_key(pem: bytes, *, passphrase: bytes | None = None) -> str:

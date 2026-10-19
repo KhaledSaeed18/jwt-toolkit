@@ -28,12 +28,6 @@ from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
 
-# Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
-# Three key-source modes, mutually exclusive:
-#   --secret      HMAC secret (HS* tokens), or --secret-file to read it from a file
-#   --public-key  PEM public key (RS*/PS*/ES*/Ed* tokens)
-#   --jwks-url    JWKS endpoint or file:// path; key resolved by the token's kid
-
 RESULT_COLORS = {
     "PASS": "bold green",
     "FAIL": "bold red",
@@ -193,7 +187,7 @@ def _validate_key_inputs(
 
     if is_hmac(alg):
         if jwks_url is not None or public_key_path is not None:
-            reject(f"{alg} is an HMAC algorithm — use --secret")
+            reject(f"{alg} is an HMAC algorithm: use --secret")
         if not secret:
             reject(
                 f"{alg} requires --secret or --secret-file",
@@ -208,7 +202,7 @@ def _validate_key_inputs(
             "Provide a PEM-encoded public key, or a JWKS endpoint the token's kid resolves against.",
         )
     if secret is not None:
-        reject(f"{alg} is an asymmetric algorithm — use --public-key or --jwks-url, not --secret")
+        reject(f"{alg} is an asymmetric algorithm: use --public-key or --jwks-url, not --secret")
 
 
 def _verify_signature(

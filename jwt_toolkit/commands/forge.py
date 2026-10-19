@@ -17,10 +17,6 @@ from jwt_toolkit.core.forge import (
     generate_variants,
 )
 
-# Forge command — generates defensive test-case variants of a JWT so the user
-# can confirm their verifier rejects each one. Output is grouped by variant.
-
-
 _INTRO = (
     "These variants are designed to be REJECTED by a correctly configured verifier. "
     "Feed each one at your verifier and confirm it returns a failure. "
@@ -108,7 +104,7 @@ def _emit_json(variants: list[Variant], *, has_public_key: bool) -> None:
 
 
 def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
-    console.print(Panel(_INTRO, title="Forge — defensive test cases", border_style="blue"))
+    console.print(Panel(_INTRO, title="Forge: defensive test cases", border_style="blue"))
 
     table = Table(title="Variants", show_lines=True)
     table.add_column("Name", style="bold", width=20)
@@ -116,7 +112,7 @@ def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
     table.add_column("Description")
     for v in variants:
         name = f"{v.name}\n[dim](header-only)[/dim]" if v.header_only else v.name
-        table.add_row(name, v.cve or "—", v.description)
+        table.add_row(name, v.cve or "n/a", v.description)
     console.print(table)
 
     for v in variants:

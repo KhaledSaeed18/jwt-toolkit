@@ -26,8 +26,6 @@ from rich.progress import (
 from jwt_toolkit.cli.console import console, err_console, status_console
 from jwt_toolkit.cli.panels import print_error, print_success
 
-# Download command — fetches the common-secrets wordlist for this release from the jwt-toolkit repo.
-
 
 def _release_ref() -> str:
     try:

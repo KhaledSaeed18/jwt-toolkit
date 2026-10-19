@@ -24,10 +24,6 @@ from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.wordlist import contains_secret
 
-# Audit command — decodes a JWT, runs the security auditor, and emits a verdict.
-# Static checks only by default; --secret adds live signature verification.
-
-
 _SEVERITY_COLORS = {
     Severity.CRITICAL: "bold red",
     Severity.WARN: "yellow",
@@ -59,7 +55,7 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
 @click.option(
     "--secret",
     default=None,
-    help="HMAC secret — when provided, signature verification is included in the report.",
+    help="HMAC secret. When provided, signature verification is included in the report.",
 )
 @secret_file_option
 @click.option(
@@ -67,7 +63,7 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     "public_key_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
-    help="PEM public key or X.509 certificate (RS*/PS*/ES*/Ed*) — when provided, asymmetric signature verification "
+    help="PEM public key or X.509 certificate (RS*/PS*/ES*/Ed*). When provided, asymmetric signature verification "
     "is included in the report. Mutually exclusive with --secret.",
 )
 @click.option(
@@ -179,7 +175,7 @@ def _check_signature(
 
     if valid:
         return (True, "Signature is valid")
-    return (False, "Signature is invalid — wrong key or tampered token")
+    return (False, "Signature is invalid, wrong key or tampered token")
 
 
 def _audit_key_material(

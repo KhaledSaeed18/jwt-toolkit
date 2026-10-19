@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_decode, strict_json_loads
 from jwt_toolkit.core.errors import TokenDecodeError
 
-# Decoder module — splits a JWT and base64url-decodes its header and payload.
-
 
 @dataclass(frozen=True)
 class DecodedToken:

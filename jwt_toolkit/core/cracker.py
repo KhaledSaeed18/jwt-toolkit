@@ -4,8 +4,6 @@ from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wai
 from dataclasses import dataclass
 from itertools import batched
 
-# Cracker module — tests candidate HMAC secrets against a token's signature.
-#
 # Work is split into batches. With more than one worker the batches run in
 # separate processes: HMAC over a short JWT signing input holds the GIL, so
 # threads give no speedup on a standard CPython build.

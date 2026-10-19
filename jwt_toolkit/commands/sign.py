@@ -28,9 +28,6 @@ from jwt_toolkit.core.errors import (
 )
 from jwt_toolkit.core.lifetime import parse_duration, with_lifetime
 
-# Sign command — construct and mint a JWT from a header+payload and either an
-# HMAC secret or a PEM-encoded private key.
-
 _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
 
 
@@ -289,7 +286,7 @@ def _validate_key_inputs(alg: str, *, secret: str | None, private_key_path: Path
             raise SystemExit(2)
         if private_key_path is not None:
             print_error(
-                f"{alg} is an HMAC algorithm — use --secret, not --private-key",
+                f"{alg} is an HMAC algorithm: use --secret, not --private-key",
                 title="Invalid Input",
             )
             raise SystemExit(2)
@@ -305,7 +302,7 @@ def _validate_key_inputs(alg: str, *, secret: str | None, private_key_path: Path
             raise SystemExit(2)
         if secret is not None:
             print_error(
-                f"{alg} is an asymmetric algorithm — use --private-key, not --secret",
+                f"{alg} is an asymmetric algorithm: use --private-key, not --secret",
                 title="Invalid Input",
             )
             raise SystemExit(2)
