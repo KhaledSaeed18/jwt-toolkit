@@ -152,6 +152,8 @@ def _filter_by_kid(keys: list, kid: str | None) -> list:
         raise ValueError(
             "Token header has no kid and JWKS contains multiple keys — refusing to guess"
         )
+    if not isinstance(keys[0], dict):
+        raise ValueError("JWKS key is not a JSON object")
     return list(keys)
 
 
@@ -222,10 +224,9 @@ def _okp_public_key_from_jwk(jwk: dict) -> ed25519.Ed25519PublicKey | ed448.Ed44
     x = jwk.get("x")
     if not isinstance(x, str):
         raise ValueError("OKP JWK is missing required field: 'x'")
-    raw = base64url_decode(x)
     key_cls = ed25519.Ed25519PublicKey if jwk.get("crv") == "Ed25519" else ed448.Ed448PublicKey
     try:
-        return key_cls.from_public_bytes(raw)
+        return key_cls.from_public_bytes(base64url_decode(x))
     except ValueError as exc:
         raise ValueError(f"OKP JWK has a malformed 'x' value: {exc}") from exc
 

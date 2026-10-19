@@ -212,3 +212,9 @@ def test_crack_without_wordlist_and_no_bundled_list_exits_2(runner, monkeypatch)
     result = runner.invoke(cli, ["crack", make_token({"sub": "1"})])
     assert result.exit_code == 2
     assert "download-wordlists" in result.output
+
+
+def test_crack_directory_wordlist_exits_2(runner, tmp_path):
+    result = runner.invoke(cli, ["crack", make_token({"sub": "1"}), str(tmp_path)])
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output

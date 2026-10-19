@@ -101,3 +101,9 @@ def test_deeply_nested_json_raises_decode_error():
     with pytest.raises(TokenDecodeError) as exc:
         decode_token(f"{deep}.{_b64('{}')}.sig")
     assert exc.value.code == "invalid_json"
+
+
+def test_non_ascii_part_raises_invalid_base64url():
+    with pytest.raises(TokenDecodeError) as excinfo:
+        decode_token("eyJé.e30.sig")
+    assert excinfo.value.code == "invalid_base64url"

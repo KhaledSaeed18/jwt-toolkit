@@ -113,8 +113,9 @@ def verify_signature(
     header_b64: str, payload_b64: str, signature: str, secret: str, alg: str = "HS256"
 ) -> bool:
     expected = sign(header_b64, payload_b64, secret, alg)
-    # compare_digest is timing-safe — unlike ==, it doesn't short-circuit.
-    return hmac.compare_digest(expected, signature)
+    # compare_digest is timing-safe. It only accepts ASCII str, and the signature
+    # segment comes from the token unvalidated, so both sides are compared as bytes.
+    return hmac.compare_digest(expected.encode(), signature.encode("utf-8", "surrogatepass"))
 
 
 # Asymmetric sign and verify.

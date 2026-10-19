@@ -112,7 +112,9 @@ def _format_rate(rate: float) -> str:
     )
 )
 @click.argument("token")
-@click.argument("wordlist", required=False, type=click.Path(exists=True, readable=True))
+@click.argument(
+    "wordlist", required=False, type=click.Path(exists=True, dir_okay=False, readable=True)
+)
 @click.option(
     "--workers",
     "--threads",

@@ -186,3 +186,10 @@ def test_secret_file_conflict_with_secret(runner, tmp_path):
     )
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "invalid_key_options"
+
+
+def test_non_ascii_signature_with_secret_reports_invalid(runner, valid_token):
+    header, payload, _ = valid_token.split(".")
+    result = invoke(runner, f"{header}.{payload}.abcé", "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["signature_valid"] is False

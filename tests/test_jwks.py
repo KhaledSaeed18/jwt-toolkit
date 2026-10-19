@@ -284,3 +284,13 @@ def test_eddsa_alg_rejects_non_okp_jwk(rsa_keypair):
     public_key = serialization.load_pem_public_key(rsa_keypair.public_pem)
     with pytest.raises(ValueError, match="kty"):
         jwk_to_public_pem(_rsa_jwk(public_key), "EdDSA")
+
+
+def test_select_jwk_rejects_non_object_key_without_kid():
+    with pytest.raises(ValueError, match="not a JSON object"):
+        select_jwk({"keys": ["not-a-jwk"]}, kid=None, alg="RS256")
+
+
+def test_okp_jwk_with_non_ascii_x_raises_value_error():
+    with pytest.raises(ValueError, match="malformed 'x'"):
+        jwk_to_public_pem({"kty": "OKP", "crv": "Ed25519", "x": "é"}, "Ed25519")

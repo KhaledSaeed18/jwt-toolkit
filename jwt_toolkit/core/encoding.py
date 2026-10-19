@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import math
 
@@ -15,6 +16,9 @@ def base64url_encode(value: bytes) -> str:
 
 
 def base64url_decode(value: str) -> bytes:
+    # The stdlib raises a bare ValueError for non-ASCII input; callers expect binascii.Error.
+    if not value.isascii():
+        raise binascii.Error("base64url input must be ASCII")
     return base64.urlsafe_b64decode(_pad(value))
 
 

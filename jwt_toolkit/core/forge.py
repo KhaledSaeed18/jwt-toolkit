@@ -113,6 +113,9 @@ def forge_one(
             f"Variant {name!r} requires --public-key — it forges using the "
             "verifier's own public key as an HMAC secret."
         )
+    if name in KEY_BASED_VARIANT_NAMES and b"PRIVATE KEY" in (public_key_pem or b""):
+        # The variant replays what a verifier publishes; a private key here is a mix-up.
+        raise ValueError("--public-key holds a private key. Pass the public key the verifier uses.")
     return builder(decoded, public_key_pem)
 
 

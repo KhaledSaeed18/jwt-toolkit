@@ -114,3 +114,27 @@ def test_unreadable_token_file_is_json_under_json_flag(runner, tmp_path, command
     result = runner.invoke(cli, [command, f"@{missing}", *extra, "--json"])
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "token_unreadable"
+
+
+def test_binary_token_file_is_reported_not_raised(runner, tmp_path):
+    binary = tmp_path / "token.bin"
+    binary.write_bytes(b"\xff\xfe\x00binary")
+    result = invoke(runner, f"@{binary}", "--json")
+    assert result.exit_code == 2
+    document = json.loads(result.stdout)
+    assert document["error"] == "token_unreadable"
+    assert document["detail"] == ["The file is not UTF-8 text"]
+
+
+def test_missing_token_file_renders_a_panel(runner, tmp_path):
+    result = invoke(runner, f"@{tmp_path / 'missing.jwt'}")
+    assert result.exit_code == 2
+    assert "Cannot read token from" in result.stderr
+    assert "Errno" not in result.stderr
+
+
+def test_non_ascii_header_is_a_base64url_error(runner, valid_token):
+    _, payload, signature = valid_token.split(".")
+    result = invoke(runner, f"eyJé.{payload}.{signature}", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"] == "invalid_base64url"

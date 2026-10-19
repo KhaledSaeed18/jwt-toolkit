@@ -7,8 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from jwt_toolkit.cli.console import console, status_console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
-from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
 from jwt_toolkit.core.forge import (
     ALL_VARIANT_NAMES,
     KEY_BASED_VARIANT_NAMES,
@@ -70,7 +69,9 @@ def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: b
     try:
         variants = _select_variants(decoded, pem=pem, mode=mode)
     except ValueError as exc:
-        print_error(str(exc), title="Forge Error")
+        emit_error(
+            code="invalid_key_options", title="Forge Error", headline=str(exc), as_json=as_json
+        )
         raise SystemExit(2) from exc
 
     if as_json:
