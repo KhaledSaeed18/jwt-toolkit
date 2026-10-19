@@ -17,6 +17,13 @@ from jwt_toolkit.cli.decoding import (
     resolve_token,
     safe_decode,
 )
+from jwt_toolkit.core.claims import (
+    Check,
+    check_audience,
+    check_critical_headers,
+    check_issuer,
+    check_time_claims,
+)
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
@@ -32,9 +39,6 @@ RESULT_COLORS = {
     "FAIL": "bold red",
     "WARN": "yellow",
 }
-
-# Small leeway used when checking iat-in-future — matches the auditor's constant.
-_IAT_FUTURE_LEEWAY_SECONDS = 60
 
 
 @click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iat, iss, aud).")
@@ -126,9 +130,6 @@ def verify(
         as_json=as_json,
     )
 
-    rows: list[tuple[str, str, str]] = []
-    failed = False
-
     try:
         sig_valid = _verify_signature(
             decoded,
@@ -147,23 +148,23 @@ def verify(
         )
         raise SystemExit(2) from exc
 
-    if sig_valid:
-        rows.append(("PASS", "signature", "Signature is valid"))
-    else:
-        rows.append(("FAIL", "signature", "Signature is invalid, wrong key or tampered token"))
-        failed = True
-
-    failed |= _check_critical_headers(decoded.header, rows)
-    failed |= _check_temporal_claims(decoded.payload, rows, leeway=leeway)
+    checks = [
+        Check("PASS", "signature", "Signature is valid")
+        if sig_valid
+        else Check("FAIL", "signature", "Signature is invalid, wrong key or tampered token"),
+        *check_critical_headers(decoded.header),
+        *check_time_claims(decoded.payload, now=time.time(), leeway=leeway),
+    ]
     if issuer is not None:
-        failed |= _check_issuer(decoded.payload, issuer, rows)
+        checks.append(check_issuer(decoded.payload, issuer))
     if audience is not None:
-        failed |= _check_audience(decoded.payload, audience, rows)
+        checks.append(check_audience(decoded.payload, audience))
+    failed = any(c.result == "FAIL" for c in checks)
 
     if as_json:
-        _emit_json(rows, failed=failed)
+        _emit_json(checks, failed=failed)
     else:
-        _render_results(rows, failed=failed)
+        _render_results(checks, failed=failed)
 
 
 def _validate_key_inputs(
@@ -232,116 +233,25 @@ def _verify_signature(
     )
 
 
-def _check_critical_headers(header: dict, rows: list[tuple[str, str, str]]) -> bool:
-    # RFC 7515 4.1.11: a recipient that does not implement every extension
-    # listed in crit MUST reject the token. This verifier implements none.
-    failed = False
-    if "crit" in header:
-        crit = header["crit"]
-        if (
-            not isinstance(crit, list)
-            or not crit
-            or not all(isinstance(name, str) for name in crit)
-            or len(set(crit)) != len(crit)
-        ):
-            rows.append(("FAIL", "crit", "crit header is malformed, token cannot be trusted"))
-        else:
-            rows.append(
-                ("FAIL", "crit", f"Token requires unsupported header extensions: {sorted(crit)}")
-            )
-        failed = True
-    # RFC 7797 unencoded payloads change the signing input; they are not supported.
-    if "b64" in header and header["b64"] is not True:
-        rows.append(("FAIL", "b64", "Unencoded payload (b64) is not supported, token rejected"))
-        failed = True
-    return failed
-
-
-def _check_temporal_claims(
-    payload: dict, rows: list[tuple[str, str, str]], *, leeway: int = 0
-) -> bool:
-    now = time.time()
-    failed = False
-
-    exp = payload.get("exp")
-    if exp is None:
-        rows.append(("WARN", "exp", "No expiry claim"))
-    elif not _is_numeric_date(exp):
-        rows.append(("FAIL", "exp", f"exp is not a number: {exp!r}"))
-        failed = True
-    elif now >= exp + leeway:
-        # RFC 7519 4.1.4: the current time MUST be before exp.
-        rows.append(("FAIL", "exp", "Token is expired"))
-        failed = True
-    else:
-        rows.append(("PASS", "exp", "Token is not expired"))
-
-    nbf = payload.get("nbf")
-    if nbf is not None:
-        if not _is_numeric_date(nbf):
-            rows.append(("FAIL", "nbf", f"nbf is not a number: {nbf!r}"))
-            failed = True
-        elif nbf > now + leeway:
-            rows.append(("FAIL", "nbf", "Token is not yet valid (nbf is in the future)"))
-            failed = True
-
-    iat = payload.get("iat")
-    if iat is not None:
-        if not _is_numeric_date(iat):
-            rows.append(("WARN", "iat", f"iat is not a number: {iat!r}"))
-        elif iat > now + _IAT_FUTURE_LEEWAY_SECONDS + leeway:
-            rows.append(("WARN", "iat", "iat is in the future — clock skew or forged token"))
-
-    return failed
-
-
-def _is_numeric_date(value: object) -> bool:
-    # bool subclasses int in Python, but true/false is not a NumericDate.
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _check_issuer(payload: dict, issuer: str, rows: list[tuple[str, str, str]]) -> bool:
-    if payload.get("iss") == issuer:
-        rows.append(("PASS", "iss", f"Issuer matches '{issuer}'"))
-        return False
-    rows.append(
-        ("FAIL", "iss", f"Issuer mismatch: expected '{issuer}', got '{payload.get('iss')}'")
-    )
-    return True
-
-
-def _check_audience(payload: dict, audience: str, rows: list[tuple[str, str, str]]) -> bool:
-    # aud can be a string or a list per RFC 7519.
-    aud = payload.get("aud")
-    aud_list = [aud] if isinstance(aud, str) else (aud if isinstance(aud, list) else [])
-    if audience in aud_list:
-        rows.append(("PASS", "aud", f"Audience matches '{audience}'"))
-        return False
-    rows.append(("FAIL", "aud", f"Audience mismatch: expected '{audience}', got {aud!r}"))
-    return True
-
-
-def _emit_json(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
+def _emit_json(checks: list[Check], *, failed: bool) -> None:
     document = {
         "schema_version": JSON_SCHEMA_VERSION,
         "valid": not failed,
-        "checks": [
-            {"result": result, "check": check, "detail": detail} for result, check, detail in rows
-        ],
+        "checks": [{"result": c.result, "check": c.check, "detail": c.detail} for c in checks],
     }
     click.echo(json.dumps(document, indent=2))
     raise SystemExit(1 if failed else 0)
 
 
-def _render_results(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
+def _render_results(checks: list[Check], *, failed: bool) -> None:
     table = Table(title="Verification Checks", show_lines=True)
     table.add_column("Result", style="bold", width=8)
     table.add_column("Check", width=12)
     table.add_column("Detail")
 
-    for result, check, detail in rows:
-        color = RESULT_COLORS[result]
-        table.add_row(f"[{color}]{result}[/{color}]", escape(check), escape(detail))
+    for c in checks:
+        color = RESULT_COLORS[c.result]
+        table.add_row(f"[{color}]{c.result}[/{color}]", escape(c.check), escape(c.detail))
 
     console.print(table)
 

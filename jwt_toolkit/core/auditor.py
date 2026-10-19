@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 
+from jwt_toolkit.core.claims import IAT_FUTURE_LEEWAY_SECONDS, is_numeric_date
 from jwt_toolkit.core.crypto import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, canonical_algorithm
 
@@ -27,9 +28,6 @@ _LIFETIME_TIERS: tuple[tuple[int, str], ...] = (
     (60 * 60 * 24, "more than 24 hours"),
     (60 * 60, "more than 1 hour"),
 )
-
-# Small clock-skew leeway when judging "iat in the future" — most systems drift a bit.
-_IAT_FUTURE_LEEWAY_SECONDS = 60
 
 # RFC 7518 3.2: an HMAC key must be at least as long as the hash output.
 _MIN_HMAC_SECRET_BYTES = {"HS256": 32, "HS384": 48, "HS512": 64}
@@ -482,7 +480,7 @@ def _audit_expiry(payload: dict) -> list[Finding]:
                 "Always set exp; short-lived tokens limit blast radius if leaked.",
             )
         ]
-    if not _is_numeric_date(exp):
+    if not is_numeric_date(exp):
         return [Finding(Severity.WARN, "exp", f"exp is not numeric ({type(exp).__name__})")]
 
     now = time.time()
@@ -490,7 +488,7 @@ def _audit_expiry(payload: dict) -> list[Finding]:
         return [Finding(Severity.CRITICAL, "exp", "Token is expired")]
 
     # Lifetime measured from iat when available, otherwise from now.
-    lifetime = exp - (iat if _is_numeric_date(iat) else now)
+    lifetime = exp - (iat if is_numeric_date(iat) else now)
     for threshold, suffix in _LIFETIME_TIERS:
         if lifetime > threshold:
             severity = (
@@ -515,7 +513,7 @@ def _audit_nbf(payload: dict) -> list[Finding]:
     nbf = payload.get("nbf")
     if nbf is None:
         return []
-    if not _is_numeric_date(nbf):
+    if not is_numeric_date(nbf):
         return [Finding(Severity.WARN, "nbf", f"nbf is not numeric ({type(nbf).__name__})")]
     if time.time() < nbf:
         return [Finding(Severity.CRITICAL, "nbf", "Token is not yet valid (nbf is in the future)")]
@@ -526,10 +524,10 @@ def _audit_iat(payload: dict) -> list[Finding]:
     iat = payload.get("iat")
     if iat is None:
         return []
-    if not _is_numeric_date(iat):
+    if not is_numeric_date(iat):
         return [Finding(Severity.WARN, "iat", f"iat is not numeric ({type(iat).__name__})")]
     exp = payload.get("exp")
-    if _is_numeric_date(exp) and exp < iat:
+    if is_numeric_date(exp) and exp < iat:
         return [
             Finding(
                 Severity.CRITICAL,
@@ -537,7 +535,7 @@ def _audit_iat(payload: dict) -> list[Finding]:
                 "exp is earlier than iat — token is malformed and may be rejected unpredictably",
             )
         ]
-    if iat > time.time() + _IAT_FUTURE_LEEWAY_SECONDS:
+    if iat > time.time() + IAT_FUTURE_LEEWAY_SECONDS:
         return [
             Finding(
                 Severity.WARN,
@@ -546,11 +544,6 @@ def _audit_iat(payload: dict) -> list[Finding]:
             )
         ]
     return [Finding(Severity.PASS, "iat", "iat looks sane")]
-
-
-def _is_numeric_date(value: object) -> bool:
-    # bool subclasses int in Python, but true/false is not a NumericDate.
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _audit_jti(payload: dict, *, required: bool = False) -> list[Finding]:
