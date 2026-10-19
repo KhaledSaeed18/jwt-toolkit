@@ -117,7 +117,7 @@ def crack(
         alg = ensure_hmac_algorithm(decoded.header, action="crack")
     except UnsupportedAlgorithmError as exc:
         emit_error(
-            code="unsupported_algorithm",
+            code=exc.code,
             title=exc.title,
             headline=exc.headline,
             details=exc.details,
