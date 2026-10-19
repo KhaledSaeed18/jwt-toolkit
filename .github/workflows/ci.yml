@@ -19,7 +19,7 @@ jobs:
         with:
           enable-cache: true
       - name: Install dev dependencies
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
       - name: Ruff format (check only)
         run: uv run ruff format --check .
       - name: Ruff lint
@@ -33,7 +33,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --group dev
+      - run: uv sync --locked --group dev
       - run: uv run mypy
 
   security:
@@ -44,7 +44,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --group dev
+      - run: uv sync --locked --group dev
       - name: Bandit static analysis
         run: uv run bandit -c pyproject.toml -r jwt_toolkit --severity-level medium
       - name: pip-audit dependency CVEs
@@ -63,7 +63,7 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --group dev
+      - run: uv sync --locked --group dev
       - name: Run tests with coverage
         run: uv run pytest --cov --cov-report=term-missing --cov-report=xml -n auto
       - name: Upload coverage artifact
