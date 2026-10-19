@@ -20,6 +20,7 @@ class UnsupportedAlgorithmError(Exception):
     title: str
     headline: str
     details: tuple[str, ...] = ()
+    code: str = "unsupported_algorithm"
 
     def __str__(self) -> str:
         return self.headline

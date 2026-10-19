@@ -466,3 +466,62 @@ def test_expires_in_rejects_invalid_durations(runner, value):
     result = invoke(runner, "--payload", "{}", "--secret", "s", "--expires-in", value)
     assert result.exit_code == 2
     assert "--expires-in" in result.output
+
+
+@pytest.mark.parametrize(
+    ("key_alg", "expected"),
+    [
+        ("RS256", "RS256"),
+        ("ES256", "ES256"),
+        ("ES384", "ES384"),
+        ("ES512", "ES512"),
+        ("Ed25519", "Ed25519"),
+        ("Ed448", "Ed448"),
+    ],
+)
+def test_private_key_without_alg_follows_the_key(runner, tmp_path, keypair_for, key_alg, expected):
+    kp = keypair_for(key_alg)
+    priv = tmp_path / "key.pem"
+    priv.write_bytes(kp.private_pem)
+    result = invoke(runner, "--payload", '{"sub":"1"}', "--private-key", str(priv))
+    assert result.exit_code == 0, result.output
+    token = result.stdout.strip()
+    decoded = decode_token(token)
+    assert decoded.header["alg"] == expected
+    assert verify_asymmetric(
+        decoded.header_b64, decoded.payload_b64, decoded.signature, kp.public_pem, expected
+    )
+
+
+def test_explicit_alg_still_wins_over_the_key(runner, tmp_path, rsa_keypair):
+    priv = tmp_path / "key.pem"
+    priv.write_bytes(rsa_keypair.private_pem)
+    result = invoke(runner, "--payload", "{}", "--private-key", str(priv), "--alg", "PS384")
+    assert decode_token(result.stdout.strip()).header["alg"] == "PS384"
+
+
+def test_header_alg_still_wins_over_the_key(runner, tmp_path, rsa_keypair):
+    priv = tmp_path / "key.pem"
+    priv.write_bytes(rsa_keypair.private_pem)
+    result = invoke(
+        runner, "--payload", "{}", "--private-key", str(priv), "--header", '{"alg":"RS512"}'
+    )
+    assert decode_token(result.stdout.strip()).header["alg"] == "RS512"
+
+
+def test_encrypted_key_without_alg_uses_the_passphrase_once(runner, tmp_path, keypair_for):
+    key = _write_encrypted_key(tmp_path, keypair_for("ES384").private_pem, b"pw")
+    pw = tmp_path / "pw.txt"
+    pw.write_bytes(b"pw\n")
+    result = invoke(
+        runner, "--payload", "{}", "--private-key", str(key), "--passphrase-file", str(pw)
+    )
+    assert result.exit_code == 0, result.output
+    assert decode_token(result.stdout.strip()).header["alg"] == "ES384"
+
+
+def test_encrypted_key_without_alg_or_passphrase_exits_2(runner, tmp_path, keypair_for):
+    key = _write_encrypted_key(tmp_path, keypair_for("ES256").private_pem, b"pw")
+    result = invoke(runner, "--payload", "{}", "--private-key", str(key))
+    assert result.exit_code == 2
+    assert "encrypted" in result.stderr

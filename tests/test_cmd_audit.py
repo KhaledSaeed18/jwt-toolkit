@@ -186,3 +186,62 @@ def test_secret_file_conflict_with_secret(runner, tmp_path):
     )
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "invalid_key_options"
+
+
+def test_non_ascii_signature_with_secret_reports_invalid(runner, valid_token):
+    header, payload, _ = valid_token.split(".")
+    result = invoke(runner, f"{header}.{payload}.abcé", "--secret", "testsecret", "--json")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["signature_valid"] is False
+
+
+def test_common_secret_fails_the_audit(runner):
+    token = make_token({"sub": "1"}, secret="supersecret")
+    result = invoke(runner, token, "--secret", "supersecret", "--json")
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["grade"] == "F"
+    secret_findings = [f for f in document["findings"] if f["field"] == "secret"]
+    assert {f["severity"] for f in secret_findings} == {"CRITICAL", "WARN"}
+    assert "supersecret" not in result.stdout
+
+
+def test_strong_secret_passes_the_key_check(runner):
+    secret = "k" * 40 + "-unlikely-to-be-in-any-list"
+    token = make_token({"sub": "1"}, secret=secret)
+    document = json.loads(invoke(runner, token, "--secret", secret, "--json").stdout)
+    assert {"severity": "PASS", "field": "secret"}.items() <= next(
+        f for f in document["findings"] if f["field"] == "secret"
+    ).items()
+
+
+def test_secret_that_does_not_verify_is_not_judged(runner):
+    token = make_token({"sub": "1"}, secret="supersecret")
+    document = json.loads(invoke(runner, token, "--secret", "other", "--json").stdout)
+    assert not [f for f in document["findings"] if f["field"] == "secret"]
+
+
+def test_small_rsa_key_fails_the_audit(runner, tmp_path):
+    private = rsa.generate_private_key(65537, 1024)
+    pem = private.private_bytes(_s.Encoding.PEM, _s.PrivateFormat.PKCS8, _s.NoEncryption())
+    public = tmp_path / "small.pub"
+    public.write_bytes(
+        private.public_key().public_bytes(_s.Encoding.PEM, _s.PublicFormat.SubjectPublicKeyInfo)
+    )
+    header = base64url_encode(b'{"alg":"RS256","typ":"JWT"}')
+    payload = base64url_encode(json.dumps({"exp": int(time.time()) + 300}).encode())
+    signature = sign_asymmetric(header, payload, pem, "RS256")
+    result = invoke(
+        runner, f"{header}.{payload}.{signature}", "--public-key", str(public), "--json"
+    )
+    document = json.loads(result.stdout)
+    assert document["grade"] == "F"
+    assert any(f["field"] == "key" and f["severity"] == "CRITICAL" for f in document["findings"])
+
+
+def test_stripped_signature_fails_the_audit(runner):
+    header, payload, _ = make_token({"sub": "1"}).split(".")
+    result = invoke(runner, f"{header}.{payload}.", "--json")
+    assert result.exit_code == 1
+    findings = json.loads(result.stdout)["findings"]
+    assert any(f["field"] == "signature" and f["severity"] == "CRITICAL" for f in findings)

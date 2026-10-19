@@ -62,7 +62,7 @@ def _strength_for(bits: int) -> str:
     is_flag=True,
     help="Print only the secret and a newline, for scripts and files.",
 )
-def generate_secret(bits: int, encoding: str, raw: bool):
+def generate_secret(bits: int, encoding: str, raw: bool) -> None:
     _validate_bits(bits)
 
     secret = secrets.token_bytes(bits // 8)
@@ -77,6 +77,6 @@ def generate_secret(bits: int, encoding: str, raw: bool):
         output,
         f"Encoding : {encoding}",
         f"Length   : {bits} bits ({bits // 8} bytes)",
-        f"Entropy  : {bits} bits — {_strength_for(bits)}",
+        f"Entropy  : {bits} bits ({_strength_for(bits)})",
         title="Generated Secret",
     )

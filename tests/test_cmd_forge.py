@@ -117,3 +117,18 @@ def test_json_marks_header_only_variants(runner, valid_token):
     variants = {v["name"]: v for v in json.loads(result.output)["variants"]}
     assert variants["jwk_embedded"]["header_only"] is True
     assert variants["alg_none_lower"]["header_only"] is False
+
+
+def test_forge_key_based_mode_without_pem_is_json_under_json_flag(runner):
+    result = invoke(runner, _token(), "--mode", "hs_rs_confusion", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"] == "invalid_key_options"
+
+
+def test_forge_rejects_a_private_key_as_public_key(runner, tmp_path, keypair_for):
+    pem = tmp_path / "private.pem"
+    pem.write_bytes(keypair_for("RS256").private_pem)
+    result = invoke(runner, _token(), "--public-key", str(pem))
+    assert result.exit_code == 2
+    assert "holds a private key" in result.stderr
+    assert "BEGIN" not in result.output

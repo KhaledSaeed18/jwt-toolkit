@@ -2,16 +2,19 @@ import binascii
 import json
 from dataclasses import dataclass
 
-from jwt_toolkit.core.encoding import NonFiniteNumberError, base64url_decode, strict_json_loads
+from jwt_toolkit.core.encoding import (
+    JsonObject,
+    NonFiniteNumberError,
+    base64url_decode,
+    strict_json_loads,
+)
 from jwt_toolkit.core.errors import TokenDecodeError
-
-# Decoder module — splits a JWT and base64url-decodes its header and payload.
 
 
 @dataclass(frozen=True)
 class DecodedToken:
-    header: dict
-    payload: dict
+    header: JsonObject
+    payload: JsonObject
     signature: str
     header_b64: str
     payload_b64: str
@@ -94,7 +97,7 @@ def decode_token(token: str) -> DecodedToken:
     )
 
 
-def _require_object(label: str, part: object) -> dict:
+def _require_object(label: str, part: object) -> JsonObject:
     # RFC 7515/7519: the protected header and the claims set must be JSON objects.
     if not isinstance(part, dict):
         raise TokenDecodeError(

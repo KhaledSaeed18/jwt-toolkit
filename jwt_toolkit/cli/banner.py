@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.text import Text
 
 try:
-    from pyfiglet import Figlet, FontNotFound  # type: ignore
+    from pyfiglet import Figlet
 
     _HAS_FIGLET = True
 except ImportError:
@@ -20,7 +20,6 @@ except ImportError:
 
 from jwt_toolkit.cli.console import console as _shared_console
 
-# Banner — startup splash for `jwt-toolkit` with no subcommand.
 # The banner is intentionally only shown for the bare invocation. Printing it
 # for every subcommand would corrupt --json output and pollute Click's usage
 # errors, so subcommands stay clean.
@@ -87,7 +86,8 @@ def _pick_art(width: int) -> tuple[str, bool]:
         try:
             fig = Figlet(font=font, width=max(width, 40))
             art = fig.renderText("JWT Toolkit").rstrip("\n")
-        except (FontNotFound, Exception):
+        # A broken or missing font must never stop the CLI; the next one is tried.
+        except Exception:  # nosec B112
             continue
         max_line = max((len(line) for line in art.splitlines()), default=0)
         if max_line <= width:
@@ -151,48 +151,46 @@ def render_banner(
     console.print()
 
 
-# help layout
-_COMMANDS: tuple[tuple[str, str], ...] = (
+# Single source for the command list and examples; CLI_HELP is built from these too.
+COMMANDS: tuple[tuple[str, str], ...] = (
     ("decode", "Decode a JWT and pretty-print its header and payload."),
-    ("sign", "Mint a new JWT from a payload and HMAC or asymmetric key."),
-    ("audit", "Static security analysis of a JWT — no key required."),
-    ("verify", "Verify a JWT's signature and standard claims."),
+    ("sign", "Mint a new JWT signed with an HMAC secret or a private key."),
+    ("audit", "Static security analysis of a JWT (no key required)."),
+    ("verify", "Verify the signature and standard claims of a JWT."),
     ("diff", "Compare two JWTs and show which fields changed."),
     ("forge", "Emit defensive attack-shaped variants of a JWT for self-audit."),
     ("crack", "Brute-force a weak HMAC secret using a wordlist."),
     ("generate-secret", "Emit a cryptographically strong random secret."),
-    ("download-wordlists", "Fetch the latest common-secrets wordlist."),
+    ("download-wordlists", "Fetch the common-secrets wordlist for this release."),
 )
 
-_EXAMPLES: tuple[tuple[str, str], ...] = (
+EXAMPLES: tuple[tuple[str, str], ...] = (
     ("decode a token", "jwt-toolkit decode <token>"),
-    ("mint a new token", 'jwt-toolkit sign --payload \'{"sub":"1"}\' --secret <secret>'),
+    ("mint a token", 'jwt-toolkit sign --payload \'{"sub":"1"}\' --secret-file hs256.secret'),
+    ("mint with a private key", 'jwt-toolkit sign --payload \'{"sub":"1"}\' --private-key key.pem'),
     ("audit a token", "jwt-toolkit audit <token>"),
-    ("strict + JSON report", "jwt-toolkit audit <token> --strict --json"),
+    ("strict JSON report", "jwt-toolkit audit <token> --strict --json"),
     (
-        "verify signature & claims",
-        "jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com",
+        "verify signature and claims",
+        "jwt-toolkit verify <token> --secret-file hs256.secret --issuer auth.example.com",
     ),
     (
         "verify against a JWKS",
         "jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json",
     ),
     ("compare two tokens", "jwt-toolkit diff @before.jwt @after.jwt"),
-    (
-        "forge defensive test cases",
-        "jwt-toolkit forge <token> --public-key key.pub.pem",
-    ),
-    (
-        "crack a weak HMAC secret",
-        "jwt-toolkit crack <token> wordlists/common-secrets.txt --threads 8",
-    ),
+    ("forge defensive test cases", "jwt-toolkit forge <token> --public-key key.pub.pem"),
+    ("test for a weak secret", "jwt-toolkit crack <token>"),
+    ("use a larger wordlist", "jwt-toolkit crack <token> rockyou.txt --workers 4"),
     ("generate a 256-bit secret", "jwt-toolkit generate-secret --bits 256 --encoding base64"),
-    ("refresh the wordlist", "jwt-toolkit download-wordlists --output-dir wordlists"),
+    ("fetch the wordlist", "jwt-toolkit download-wordlists --output-dir wordlists"),
 )
 
 _OPTIONS: tuple[tuple[str, str], ...] = (
     ("--version", "Show the version and exit."),
-    ("--no-banner", "Suppress the startup banner  (env: JWT_TOOLKIT_NO_BANNER)."),
+    ("--no-banner", "Suppress the startup banner (env: JWT_TOOLKIT_NO_BANNER)."),
+    ("--quiet", "Keep results and errors, drop progress and hints (env: JWT_TOOLKIT_QUIET)."),
+    ("--no-color", "Disable color output (env: NO_COLOR)."),
     ("-h, --help", "Show this message and exit."),
 )
 
@@ -223,16 +221,14 @@ def render_help(console: Console | None = None) -> None:
     """Render a polished, sectioned help screen for the bare invocation."""
     console = console or _shared_console
 
-    # ABOUT
     about = Text(
         "A command-line toolkit for inspecting, verifying, cracking, and securing "
-        "JSON Web Tokens — built to expose how JWT signing works and where it breaks.",
+        "JSON Web Tokens, built to expose how JWT signing works and where it breaks.",
         style="white",
     )
     console.print(_section_header("ABOUT"))
     console.print(Padding(about, (0, 4, 1, 4)))
 
-    # USAGE
     usage = Text()
     usage.append("$ ", style=_DIM)
     usage.append("jwt-toolkit ", style="bold white")
@@ -243,25 +239,22 @@ def render_help(console: Console | None = None) -> None:
     console.print(_section_header("USAGE"))
     console.print(Padding(usage, (0, 0, 1, 4)))
 
-    # COMMANDS
     console.print(_section_header("COMMANDS"))
     console.print(
         Padding(
-            _two_col_table(_COMMANDS, key_style="bold cyan"),
+            _two_col_table(COMMANDS, key_style="bold cyan"),
             (0, 0, 1, 2),
         )
     )
 
-    # EXAMPLES — dim "# label" comment beside a green command line
     console.print(_section_header("EXAMPLES"))
     console.print(
         Padding(
-            _two_col_table(_EXAMPLES, key_style=_DIM, value_style="bright_green", key_prefix="# "),
+            _two_col_table(EXAMPLES, key_style=_DIM, value_style="bright_green", key_prefix="# "),
             (0, 0, 1, 2),
         )
     )
 
-    # OPTIONS
     console.print(_section_header("OPTIONS"))
     console.print(
         Padding(

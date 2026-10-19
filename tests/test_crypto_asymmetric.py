@@ -10,6 +10,7 @@ from jwt_toolkit.core.crypto import (
     OKP_ALGORITHMS,
     PSS_ALGORITHMS,
     RSA_ALGORITHMS,
+    algorithm_for_private_key,
     sign_asymmetric,
     verify_asymmetric,
 )
@@ -236,3 +237,31 @@ def test_wrong_passphrase_is_reported_without_echoing_it(keypair_for):
 def test_passphrase_for_unencrypted_key_is_rejected(keypair_for):
     with pytest.raises(ValueError, match="not encrypted"):
         sign_asymmetric("h", "p", keypair_for("ES256").private_pem, "ES256", passphrase=b"x")
+
+
+@pytest.mark.parametrize(
+    ("key_alg", "expected"),
+    [("RS256", "RS256"), ("ES384", "ES384"), ("Ed25519", "Ed25519"), ("Ed448", "Ed448")],
+)
+def test_algorithm_for_private_key(keypair_for, key_alg, expected):
+    assert algorithm_for_private_key(keypair_for(key_alg).private_pem) == expected
+
+
+def test_algorithm_for_private_key_rejects_unsupported_curves():
+    pem = ec.generate_private_key(ec.SECP256K1()).private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    with pytest.raises(ValueError, match="no JWS algorithm"):
+        algorithm_for_private_key(pem)
+
+
+def test_algorithm_for_private_key_rejects_key_agreement_keys():
+    pem = x25519.X25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    with pytest.raises(ValueError, match="cannot sign"):
+        algorithm_for_private_key(pem)

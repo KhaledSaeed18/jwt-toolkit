@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import NoReturn
+from urllib.parse import urlparse
 
 import click
 from rich.markup import escape
@@ -17,24 +17,24 @@ from jwt_toolkit.cli.decoding import (
     resolve_token,
     safe_decode,
 )
+from jwt_toolkit.core.claims import (
+    Check,
+    check_audience,
+    check_critical_headers,
+    check_issuer,
+    check_time_claims,
+)
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
+from jwt_toolkit.core.decoder import DecodedToken
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
-
-# Verify command — checks the signature and validates claims (exp, nbf, iat, iss, aud).
-# Three key-source modes, mutually exclusive:
-#   --secret      HMAC secret (HS* tokens), or --secret-file to read it from a file
-#   --public-key  PEM public key (RS*/PS*/ES*/Ed* tokens)
-#   --jwks-url    JWKS endpoint or file:// path; key resolved by the token's kid
 
 RESULT_COLORS = {
     "PASS": "bold green",
     "FAIL": "bold red",
     "WARN": "yellow",
 }
-
-# Small leeway used when checking iat-in-future — matches the auditor's constant.
-_IAT_FUTURE_LEEWAY_SECONDS = 60
 
 
 @click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iat, iss, aud).")
@@ -90,7 +90,7 @@ def verify(
     audience: str | None,
     leeway: int,
     as_json: bool,
-):
+) -> None:
     try:
         secret = resolve_secret(secret, secret_path)
     except SecretInputError as exc:
@@ -106,112 +106,122 @@ def verify(
     token = resolve_token(token, as_json=as_json)
 
     decoded = safe_decode(token, as_json=as_json)
-    try:
-        alg = ensure_signing_algorithm(decoded.header)
-    except UnsupportedAlgorithmError as exc:
-        emit_error(
-            code="unsupported_algorithm",
-            title=exc.title,
-            headline=exc.headline,
-            details=exc.details,
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
-
-    _validate_key_inputs(
-        alg,
-        secret=secret,
-        public_key_path=public_key_path,
-        jwks_url=jwks_url,
-        as_json=as_json,
+    _require_one_key_source(
+        secret=secret, public_key_path=public_key_path, jwks_url=jwks_url, as_json=as_json
     )
 
-    rows: list[tuple[str, str, str]] = []
-    failed = False
-
-    try:
-        sig_valid = _verify_signature(
-            decoded,
-            alg,
-            secret=secret,
-            public_key_path=public_key_path,
-            jwks_url=jwks_url,
-        )
-    except ValueError as exc:
-        emit_error(
-            code="key_error",
-            title="Key Error",
-            headline="Could not verify signature with the provided key",
-            details=(str(exc),),
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
-
-    if sig_valid:
-        rows.append(("PASS", "signature", "Signature is valid"))
+    alg, rejection = _pin_algorithm(decoded.header, uses_secret=secret is not None)
+    if alg is None:
+        signature_check = Check("FAIL", "signature", rejection or "Token is rejected")
     else:
-        rows.append(("FAIL", "signature", "Signature is invalid, wrong key or tampered token"))
-        failed = True
+        try:
+            sig_valid = _verify_signature(
+                decoded,
+                alg,
+                secret=secret,
+                public_key_path=public_key_path,
+                jwks_url=jwks_url,
+            )
+        except ValueError as exc:
+            emit_error(
+                code="key_error",
+                title="Key Error",
+                headline="Could not verify signature with the provided key",
+                details=(str(exc),),
+                as_json=as_json,
+            )
+            raise SystemExit(2) from exc
+        signature_check = (
+            Check("PASS", "signature", "Signature is valid")
+            if sig_valid
+            else Check("FAIL", "signature", "Signature is invalid, wrong key or tampered token")
+        )
 
-    failed |= _check_critical_headers(decoded.header, rows)
-    failed |= _check_temporal_claims(decoded.payload, rows, leeway=leeway)
+    checks = [
+        signature_check,
+        *_transport_checks(jwks_url),
+        *check_critical_headers(decoded.header),
+        *check_time_claims(decoded.payload, now=time.time(), leeway=leeway),
+    ]
     if issuer is not None:
-        failed |= _check_issuer(decoded.payload, issuer, rows)
+        checks.append(check_issuer(decoded.payload, issuer))
     if audience is not None:
-        failed |= _check_audience(decoded.payload, audience, rows)
+        checks.append(check_audience(decoded.payload, audience))
+    failed = any(c.result == "FAIL" for c in checks)
 
     if as_json:
-        _emit_json(rows, failed=failed)
+        _emit_json(checks, failed=failed)
     else:
-        _render_results(rows, failed=failed)
+        _render_results(checks, failed=failed)
 
 
-def _validate_key_inputs(
-    alg: str,
+def _require_one_key_source(
     *,
     secret: str | None,
     public_key_path: Path | None,
     jwks_url: str | None,
     as_json: bool,
 ) -> None:
-    def reject(headline: str, *details: str) -> NoReturn:
-        emit_error(
-            code="invalid_key_options",
-            title="Invalid Input",
-            headline=headline,
-            details=details,
-            as_json=as_json,
-        )
-        raise SystemExit(2)
-
-    # Enforce exactly-one key source. Counting truthy options is clearer than
-    # nested pairwise checks once a third mode enters the picture.
+    # Which key the operator supplied is a usage question (exit 2); whether the
+    # token fits that key is a verdict on the token (exit 1).
     sources = sum(x is not None for x in (secret, public_key_path, jwks_url))
-    if sources > 1:
-        reject("Pass only one of --secret, --public-key, or --jwks-url")
-
-    if is_hmac(alg):
-        if jwks_url is not None or public_key_path is not None:
-            reject(f"{alg} is an HMAC algorithm — use --secret")
-        if not secret:
-            reject(
-                f"{alg} requires --secret or --secret-file",
-                "Provide the HMAC secret the token was signed with.",
-            )
+    if sources == 1 and secret != "":
         return
+    headline = (
+        "Pass only one of --secret, --public-key, or --jwks-url"
+        if sources > 1
+        else "Provide the key to verify with"
+    )
+    emit_error(
+        code="invalid_key_options",
+        title="Invalid Input",
+        headline=headline,
+        details=(
+            "--secret or --secret-file for HS* tokens; --public-key or --jwks-url for "
+            "RS*, PS*, ES*, and Ed* tokens.",
+        ),
+        as_json=as_json,
+    )
+    raise SystemExit(2)
 
-    # Asymmetric path — accept either a PEM file or a JWKS URL.
-    if public_key_path is None and jwks_url is None:
-        reject(
-            f"{alg} requires --public-key or --jwks-url",
-            "Provide a PEM-encoded public key, or a JWKS endpoint the token's kid resolves against.",
+
+def _transport_checks(jwks_url: str | None) -> list[Check]:
+    # Plain HTTP stays allowed for compatibility, but the verdict must say the
+    # key itself was exposed to tampering in transit.
+    if jwks_url is None or urlparse(jwks_url).scheme != "http":
+        return []
+    return [
+        Check(
+            "WARN",
+            "jwks",
+            "Keys were fetched over plain HTTP, so anyone on the network path could "
+            "substitute them; use an https:// JWKS URL",
         )
-    if secret is not None:
-        reject(f"{alg} is an asymmetric algorithm — use --public-key or --jwks-url, not --secret")
+    ]
+
+
+def _pin_algorithm(header: JsonObject, *, uses_secret: bool) -> tuple[str | None, str | None]:
+    # The supplied key decides the algorithm family. A token that names another
+    # family, no algorithm, or alg: none is rejected as a token, never trusted.
+    try:
+        alg = ensure_signing_algorithm(header)
+    except UnsupportedAlgorithmError as exc:
+        return None, " ".join((exc.headline, *exc.details[1:]))
+    if uses_secret and not is_hmac(alg):
+        return None, (
+            f"Token claims {alg}, but an HMAC secret was supplied; the key decides the "
+            "algorithm, so the token is rejected"
+        )
+    if not uses_secret and is_hmac(alg):
+        return None, (
+            f"Token claims {alg}, but a public key was supplied; accepting it would be "
+            "algorithm confusion (CVE-2016-10555)"
+        )
+    return alg, None
 
 
 def _verify_signature(
-    decoded,
+    decoded: DecodedToken,
     alg: str,
     *,
     secret: str | None,
@@ -232,116 +242,25 @@ def _verify_signature(
     )
 
 
-def _check_critical_headers(header: dict, rows: list[tuple[str, str, str]]) -> bool:
-    # RFC 7515 4.1.11: a recipient that does not implement every extension
-    # listed in crit MUST reject the token. This verifier implements none.
-    failed = False
-    if "crit" in header:
-        crit = header["crit"]
-        if (
-            not isinstance(crit, list)
-            or not crit
-            or not all(isinstance(name, str) for name in crit)
-            or len(set(crit)) != len(crit)
-        ):
-            rows.append(("FAIL", "crit", "crit header is malformed, token cannot be trusted"))
-        else:
-            rows.append(
-                ("FAIL", "crit", f"Token requires unsupported header extensions: {sorted(crit)}")
-            )
-        failed = True
-    # RFC 7797 unencoded payloads change the signing input; they are not supported.
-    if "b64" in header and header["b64"] is not True:
-        rows.append(("FAIL", "b64", "Unencoded payload (b64) is not supported, token rejected"))
-        failed = True
-    return failed
-
-
-def _check_temporal_claims(
-    payload: dict, rows: list[tuple[str, str, str]], *, leeway: int = 0
-) -> bool:
-    now = time.time()
-    failed = False
-
-    exp = payload.get("exp")
-    if exp is None:
-        rows.append(("WARN", "exp", "No expiry claim"))
-    elif not _is_numeric_date(exp):
-        rows.append(("FAIL", "exp", f"exp is not a number: {exp!r}"))
-        failed = True
-    elif now >= exp + leeway:
-        # RFC 7519 4.1.4: the current time MUST be before exp.
-        rows.append(("FAIL", "exp", "Token is expired"))
-        failed = True
-    else:
-        rows.append(("PASS", "exp", "Token is not expired"))
-
-    nbf = payload.get("nbf")
-    if nbf is not None:
-        if not _is_numeric_date(nbf):
-            rows.append(("FAIL", "nbf", f"nbf is not a number: {nbf!r}"))
-            failed = True
-        elif nbf > now + leeway:
-            rows.append(("FAIL", "nbf", "Token is not yet valid (nbf is in the future)"))
-            failed = True
-
-    iat = payload.get("iat")
-    if iat is not None:
-        if not _is_numeric_date(iat):
-            rows.append(("WARN", "iat", f"iat is not a number: {iat!r}"))
-        elif iat > now + _IAT_FUTURE_LEEWAY_SECONDS + leeway:
-            rows.append(("WARN", "iat", "iat is in the future — clock skew or forged token"))
-
-    return failed
-
-
-def _is_numeric_date(value: object) -> bool:
-    # bool subclasses int in Python, but true/false is not a NumericDate.
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _check_issuer(payload: dict, issuer: str, rows: list[tuple[str, str, str]]) -> bool:
-    if payload.get("iss") == issuer:
-        rows.append(("PASS", "iss", f"Issuer matches '{issuer}'"))
-        return False
-    rows.append(
-        ("FAIL", "iss", f"Issuer mismatch: expected '{issuer}', got '{payload.get('iss')}'")
-    )
-    return True
-
-
-def _check_audience(payload: dict, audience: str, rows: list[tuple[str, str, str]]) -> bool:
-    # aud can be a string or a list per RFC 7519.
-    aud = payload.get("aud")
-    aud_list = [aud] if isinstance(aud, str) else (aud if isinstance(aud, list) else [])
-    if audience in aud_list:
-        rows.append(("PASS", "aud", f"Audience matches '{audience}'"))
-        return False
-    rows.append(("FAIL", "aud", f"Audience mismatch: expected '{audience}', got {aud!r}"))
-    return True
-
-
-def _emit_json(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
+def _emit_json(checks: list[Check], *, failed: bool) -> None:
     document = {
         "schema_version": JSON_SCHEMA_VERSION,
         "valid": not failed,
-        "checks": [
-            {"result": result, "check": check, "detail": detail} for result, check, detail in rows
-        ],
+        "checks": [{"result": c.result, "check": c.check, "detail": c.detail} for c in checks],
     }
     click.echo(json.dumps(document, indent=2))
     raise SystemExit(1 if failed else 0)
 
 
-def _render_results(rows: list[tuple[str, str, str]], *, failed: bool) -> None:
+def _render_results(checks: list[Check], *, failed: bool) -> None:
     table = Table(title="Verification Checks", show_lines=True)
     table.add_column("Result", style="bold", width=8)
     table.add_column("Check", width=12)
     table.add_column("Detail")
 
-    for result, check, detail in rows:
-        color = RESULT_COLORS[result]
-        table.add_row(f"[{color}]{result}[/{color}]", escape(check), escape(detail))
+    for c in checks:
+        color = RESULT_COLORS[c.result]
+        table.add_row(f"[{color}]{c.result}[/{color}]", escape(c.check), escape(c.detail))
 
     console.print(table)
 

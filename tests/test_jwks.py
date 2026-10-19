@@ -1,4 +1,6 @@
 import json
+from urllib.error import URLError
+from urllib.request import Request
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -6,6 +8,8 @@ from cryptography.hazmat.primitives import serialization
 from jwt_toolkit.core.crypto import sign_asymmetric, verify_asymmetric
 from jwt_toolkit.core.encoding import base64url_encode
 from jwt_toolkit.core.jwks import (
+    MAX_JWKS_BYTES,
+    _NoDowngradeRedirectHandler,
     fetch_jwks,
     jwk_to_public_pem,
     resolve_jwks_key,
@@ -284,3 +288,62 @@ def test_eddsa_alg_rejects_non_okp_jwk(rsa_keypair):
     public_key = serialization.load_pem_public_key(rsa_keypair.public_pem)
     with pytest.raises(ValueError, match="kty"):
         jwk_to_public_pem(_rsa_jwk(public_key), "EdDSA")
+
+
+def test_select_jwk_rejects_non_object_key_without_kid():
+    with pytest.raises(ValueError, match="not a JSON object"):
+        select_jwk({"keys": ["not-a-jwk"]}, kid=None, alg="RS256")
+
+
+def test_okp_jwk_with_non_ascii_x_raises_value_error():
+    with pytest.raises(ValueError, match="malformed 'x'"):
+        jwk_to_public_pem({"kty": "OKP", "crv": "Ed25519", "x": "é"}, "Ed25519")
+
+
+def _rsa_public(rsa_keypair):
+    return serialization.load_pem_public_key(rsa_keypair.public_pem)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"use": "enc"}, {"key_ops": ["encrypt"]}, {"key_ops": "verify"}],
+)
+def test_select_jwk_rejects_keys_not_meant_for_signatures(rsa_keypair, extra):
+    jwk = {**_rsa_jwk(_rsa_public(rsa_keypair), kid="k"), **extra}
+    with pytest.raises(ValueError, match=r"cannot verify|does not allow"):
+        select_jwk({"keys": [jwk]}, kid="k", alg="RS256")
+
+
+@pytest.mark.parametrize("extra", [{}, {"use": "sig"}, {"key_ops": ["verify"]}])
+def test_select_jwk_accepts_signature_keys(rsa_keypair, extra):
+    jwk = {**_rsa_jwk(_rsa_public(rsa_keypair), kid="k"), **extra}
+    assert select_jwk({"keys": [jwk]}, kid="k", alg="RS256") is jwk
+
+
+def test_fetch_jwks_refuses_oversized_documents(tmp_path):
+    big = tmp_path / "jwks.json"
+    big.write_text('{"keys": [], "pad": "' + "x" * MAX_JWKS_BYTES + '"}')
+    with pytest.raises(ValueError, match="larger than"):
+        fetch_jwks(big.as_uri())
+
+
+def test_fetch_error_message_has_no_urllib_wrapper():
+    with pytest.raises(ValueError) as excinfo:
+        fetch_jwks("file:///nonexistent/jwks.json")
+    assert "<urlopen error" not in str(excinfo.value)
+
+
+def test_redirect_from_https_to_http_is_refused():
+    handler = _NoDowngradeRedirectHandler()
+    request = Request("https://keys.example/jwks.json")
+    with pytest.raises(URLError, match="refusing a redirect"):
+        handler.redirect_request(request, None, 302, "Found", {}, "http://keys.example/jwks.json")
+
+
+def test_redirect_within_https_is_allowed():
+    handler = _NoDowngradeRedirectHandler()
+    request = Request("https://keys.example/jwks.json")
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {}, "https://cdn.keys.example/jwks.json"
+    )
+    assert redirected.full_url == "https://cdn.keys.example/jwks.json"

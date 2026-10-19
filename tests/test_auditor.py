@@ -1,6 +1,8 @@
 import time
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from jwt_toolkit.core.auditor import (
     Grade,
@@ -10,6 +12,8 @@ from jwt_toolkit.core.auditor import (
     _audit_kid_injection,
     _audit_sensitive_values,
     _audit_typ,
+    audit_hmac_secret,
+    audit_public_key,
     run_audit,
 )
 
@@ -464,3 +468,105 @@ def test_non_canonical_alg_case_is_flagged(raw, canonical):
 def test_lowercase_hmac_with_smuggled_key_is_still_key_confusion():
     report = run_audit({"alg": "hs256", "typ": "JWT", "jwk": {"kty": "oct"}}, {})
     assert any("key-confusion" in f.message for f in report.findings)
+
+
+# Stripped signature
+
+
+def test_empty_signature_on_signed_alg_is_critical():
+    report = run_audit({"alg": "HS256", "typ": "JWT"}, {}, signature="")
+    assert _has(report.findings, Severity.CRITICAL, "signature")
+    assert report.grade is Grade.F
+
+
+def test_empty_signature_on_alg_none_is_left_to_the_alg_rule():
+    report = run_audit({"alg": "none"}, {}, signature="")
+    assert _find(report.findings, "signature") is None
+
+
+def test_signature_check_is_skipped_when_not_supplied():
+    report = run_audit({"alg": "HS256"}, {})
+    assert _find(report.findings, "signature") is None
+
+
+# x5c
+
+
+def test_x5c_chain_is_flagged_as_embedded_not_remote():
+    finding = _find(run_audit({"alg": "RS256", "x5c": ["MIIB"]}, {}).findings, "x5c")
+    assert finding.severity is Severity.WARN
+    assert "certificate chain" in finding.message
+    assert "external" not in finding.message
+
+
+def test_malformed_x5c_is_warn():
+    finding = _find(run_audit({"alg": "RS256", "x5c": "MIIB"}, {}).findings, "x5c")
+    assert finding.severity is Severity.WARN
+    assert "malformed" in finding.message
+
+
+# Claim types
+
+
+@pytest.mark.parametrize("claim", ["iss", "sub"])
+def test_non_string_iss_or_sub_is_warn(claim):
+    findings = run_audit({"alg": "RS256"}, {claim: 7}).findings
+    assert _has(findings, Severity.WARN, claim)
+
+
+@pytest.mark.parametrize("aud", [5, ["api", 2], {"a": 1}, None])
+def test_aud_must_be_string_or_list_of_strings(aud):
+    findings = run_audit({"alg": "RS256"}, {"aud": aud}).findings
+    assert _has(findings, Severity.WARN, "aud")
+
+
+@pytest.mark.parametrize("aud", ["api", ["api", "web"]])
+def test_well_typed_aud_is_not_flagged(aud):
+    findings = run_audit({"alg": "RS256"}, {"aud": aud}).findings
+    assert not _has(findings, Severity.WARN, "aud")
+
+
+# Key material
+
+
+def test_common_secret_is_critical():
+    findings = audit_hmac_secret(b"x" * 32, "HS256", in_common_wordlist=True)
+    assert _has(findings, Severity.CRITICAL, "secret")
+
+
+@pytest.mark.parametrize(("alg", "minimum"), [("HS256", 32), ("HS384", 48), ("HS512", 64)])
+def test_short_secret_is_warn_per_rfc_7518(alg, minimum):
+    short = audit_hmac_secret(b"x" * (minimum - 1), alg, in_common_wordlist=False)
+    assert _has(short, Severity.WARN, "secret")
+    enough = audit_hmac_secret(b"x" * minimum, alg, in_common_wordlist=False)
+    assert enough == [f for f in enough if f.severity is Severity.PASS]
+
+
+def test_secret_findings_never_include_the_secret():
+    secret = b"hunter2-not-in-output"
+    for finding in audit_hmac_secret(secret, "HS256", in_common_wordlist=True):
+        assert secret.decode() not in finding.message
+        assert secret.decode() not in (finding.recommendation or "")
+
+
+def _public_pem(key) -> bytes:
+    return key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
+def test_rsa_key_under_2048_bits_is_critical():
+    findings = audit_public_key(_public_pem(rsa.generate_private_key(65537, 1024)))
+    assert _has(findings, Severity.CRITICAL, "key")
+
+
+def test_rsa_2048_key_passes(rsa_keypair):
+    assert _has(audit_public_key(rsa_keypair.public_pem), Severity.PASS, "key")
+
+
+def test_non_rsa_key_has_no_size_finding():
+    assert audit_public_key(_public_pem(ec.generate_private_key(ec.SECP256R1()))) == []
+
+
+def test_unparseable_key_has_no_size_finding():
+    assert audit_public_key(b"not a key") == []

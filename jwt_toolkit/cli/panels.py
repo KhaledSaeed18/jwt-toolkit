@@ -3,7 +3,7 @@ from collections.abc import Iterable
 from rich.markup import escape
 from rich.panel import Panel
 
-from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.console import console, err_console
 
 
 # Headlines and details are plain text and may carry token or user input, so they are
@@ -12,7 +12,7 @@ def print_error(headline: str, *details: str, title: str) -> None:
     body = f"[bold red]{escape(headline)}[/bold red]"
     if details:
         body += "\n\n" + "\n".join(f"[dim]{escape(line)}[/dim]" for line in details)
-    console.print(Panel(body, title=title, border_style="red"))
+    err_console.print(Panel(body, title=title, border_style="red"))
 
 
 def print_success(

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from jwt_toolkit.core.decoder import DecodedToken
+from jwt_toolkit.core.encoding import JsonObject
 
 type Section = Literal["header", "payload"]
 type ChangeKind = Literal["added", "removed", "changed"]
@@ -80,7 +81,7 @@ def diff_tokens(before: DecodedToken, after: DecodedToken) -> TokenDiff:
     )
 
 
-def _diff_section(section: Section, before: dict, after: dict) -> list[FieldChange]:
+def _diff_section(section: Section, before: JsonObject, after: JsonObject) -> list[FieldChange]:
     notable_fields = NOTABLE_HEADER_FIELDS if section == "header" else NOTABLE_PAYLOAD_FIELDS
     changes: list[FieldChange] = []
     for key in _ordered_keys(before, after):
@@ -92,8 +93,8 @@ def _diff_section(section: Section, before: dict, after: dict) -> list[FieldChan
 def _diff_value(
     section: Section,
     path: str,
-    before: dict | list,
-    after: dict | list,
+    before: JsonObject | list[object],
+    after: JsonObject | list[object],
     key: str | int,
     *,
     notable: bool,
@@ -144,13 +145,13 @@ def _encoding_only_change(
     return not _same_segment(old_b64, new_b64)
 
 
-def _ordered_keys(before: dict, after: dict) -> list[str]:
+def _ordered_keys(before: JsonObject, after: JsonObject) -> list[str]:
     return [*before, *(key for key in after if key not in before)]
 
 
-def _lookup(container: dict | list, key: str | int) -> object:
+def _lookup(container: JsonObject | list[object], key: str | int) -> object:
     if isinstance(container, dict):
-        return container.get(key, _MISSING)
+        return container.get(str(key), _MISSING)
     if isinstance(key, int) and key < len(container):
         return container[key]
     return _MISSING

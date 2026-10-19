@@ -1,12 +1,12 @@
 import json
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 import click
 
 from jwt_toolkit.cli.panels import print_error
 from jwt_toolkit.core.decoder import DecodedToken, decode_token
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import TokenDecodeError, UnsupportedAlgorithmError
 
 # Stable schema version shared by every command that emits --json errors.
@@ -20,35 +20,45 @@ def resolve_token(raw: str, *, as_json: bool = False) -> str:
       -        read from stdin
       @<path>  read from a file
       <token>  use as-is
+
+    A leading "Bearer " is dropped, so a value copied from an Authorization
+    header works as-is.
     """
     if raw == "-":
-        return sys.stdin.read().strip()
+        return _strip_bearer(sys.stdin.read())
     if raw.startswith("@"):
         path = raw[1:]
         try:
-            with Path(path).open() as fh:
-                return fh.read().strip()
-        except OSError as exc:
-            if as_json:
-                _emit_error(
-                    code="token_unreadable",
-                    title="Input Error",
-                    headline=f"Cannot read token from {path!r}",
-                    details=(exc.strerror or type(exc).__name__,),
-                    as_json=True,
-                    extra=None,
-                )
-            else:
-                click.echo(f"Cannot read token from {path!r}: {exc}", err=True)
+            return _strip_bearer(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            reason = (
+                "The file is not UTF-8 text"
+                if isinstance(exc, UnicodeDecodeError)
+                else exc.strerror or type(exc).__name__
+            )
+            _emit_error(
+                code="token_unreadable",
+                title="Input Error",
+                headline=f"Cannot read token from {path!r}",
+                details=(reason,),
+                as_json=as_json,
+                extra=None,
+            )
             raise SystemExit(2) from exc
-    return raw
+    return _strip_bearer(raw)
+
+
+def _strip_bearer(value: str) -> str:
+    # RFC 6750 2.1: the auth scheme name is case-insensitive.
+    value = value.strip()
+    scheme, _, rest = value.partition(" ")
+    return rest.strip() if scheme.lower() == "bearer" and rest else value
 
 
 def safe_decode(
     token: str,
     *,
     as_json: bool = False,
-    json_extra: Callable[[TokenDecodeError], dict] | None = None,
 ) -> DecodedToken:
     # Decode a token, rendering a consistent error panel/JSON on failure and
     # exiting with code 2. The caller never has to know about the exception types.
@@ -61,7 +71,7 @@ def safe_decode(
             headline=exc.headline,
             details=exc.details,
             as_json=as_json,
-            extra=json_extra(exc) if json_extra else None,
+            extra=None,
         )
         raise SystemExit(2) from exc
 
@@ -73,7 +83,7 @@ def emit_error(
     headline: str,
     details: tuple[str, ...] = (),
     as_json: bool,
-    extra: dict | None = None,
+    extra: JsonObject | None = None,
 ) -> None:
     # Public entry for commands: a JSON envelope under --json, a panel otherwise.
     _emit_error(
@@ -92,7 +102,7 @@ def _emit_error(
     headline: str,
     details: tuple[str, ...],
     as_json: bool,
-    extra: dict | None,
+    extra: JsonObject | None,
 ) -> None:
     if as_json:
         document = {

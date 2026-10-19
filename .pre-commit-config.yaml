@@ -8,7 +8,7 @@
 repos:
   # General hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -21,15 +21,15 @@ repos:
   # Ruff — formatter + linter (replaces black, flake8, isort).
   # Order matters: format first, then lint so the linter sees formatted code.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.14
+    rev: v0.17.1
     hooks:
       - id: ruff-format
-      - id: ruff
+      - id: ruff-check
         args: ["--fix"]
 
   # Bandit static security scan. Source-only, no network — safe to run on commit.
   - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.6
+    rev: 1.9.4
     hooks:
       - id: bandit
         args: ["-c", "pyproject.toml", "--severity-level", "medium"]

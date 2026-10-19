@@ -4,10 +4,15 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
+
+from jwt_toolkit.core.claims import IAT_FUTURE_LEEWAY_SECONDS, is_numeric_date
 from jwt_toolkit.core.crypto import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, canonical_algorithm
-
-# Auditor module — static security analysis of a decoded JWT header and payload.
+from jwt_toolkit.core.encoding import JsonObject
 
 # Symmetric algorithms — vulnerable to offline brute-force if the secret is weak.
 SYMMETRIC_ALGORITHMS = set(SUPPORTED_ALGORITHMS)
@@ -23,8 +28,11 @@ _LIFETIME_TIERS: tuple[tuple[int, str], ...] = (
     (60 * 60, "more than 1 hour"),
 )
 
-# Small clock-skew leeway when judging "iat in the future" — most systems drift a bit.
-_IAT_FUTURE_LEEWAY_SECONDS = 60
+# RFC 7518 3.2: an HMAC key must be at least as long as the hash output.
+_MIN_HMAC_SECRET_BYTES = {"HS256": 32, "HS384": 48, "HS512": 64}
+
+# NIST SP 800-131A disallows RSA keys under 2048 bits for signatures.
+_MIN_RSA_KEY_BITS = 2048
 
 # Header parameters that smuggle a key into the token itself.
 # An attacker who controls these can sometimes coerce the verifier into trusting their key.
@@ -114,14 +122,22 @@ class Report:
 # individual `_audit_*` helpers or `audit()` directly — so grading and sorting
 # stay in lockstep with the findings.
 def run_audit(
-    header: dict,
-    payload: dict,
+    header: JsonObject,
+    payload: JsonObject,
     *,
     required_claims: frozenset[str] = frozenset(),
+    signature: str | None = None,
+    key_findings: Iterable[Finding] = (),
 ) -> Report:
+    # `signature` enables the stripped-signature check; `key_findings` come from
+    # audit_hmac_secret / audit_public_key when the caller supplied key material.
     findings = tuple(
         sorted(
-            audit(header, payload, required_claims=required_claims),
+            [
+                *audit(header, payload, required_claims=required_claims),
+                *_audit_signature(header, signature),
+                *key_findings,
+            ],
             key=_finding_sort_key,
         )
     )
@@ -134,8 +150,8 @@ def run_audit(
 
 # Legacy in-module entry point. Kept because `run_audit` composes it.
 def audit(
-    header: dict,
-    payload: dict,
+    header: JsonObject,
+    payload: JsonObject,
     *,
     required_claims: frozenset[str] = frozenset(),
 ) -> list[Finding]:
@@ -152,12 +168,10 @@ def audit(
     findings.extend(_audit_iat(payload))
     findings.extend(_audit_jti(payload, required="jti" in required_claims))
     findings.extend(_audit_claims(payload, required_claims=required_claims))
+    findings.extend(_audit_claim_types(payload))
     findings.extend(_audit_sensitive_fields(payload))
     findings.extend(_audit_sensitive_values(payload))
     return findings
-
-
-# Grading
 
 
 # Single source of truth for grade boundaries. `--strict` lives at the command
@@ -186,8 +200,7 @@ def _finding_sort_key(f: Finding) -> tuple[int, str]:
     return (_SEVERITY_ORDER[f.severity], f.field)
 
 
-# Header checks
-def _audit_algorithm(header: dict) -> list[Finding]:
+def _audit_algorithm(header: JsonObject) -> list[Finding]:
     raw = header.get("alg", "")
     if str(raw).upper() == "NONE":
         return [
@@ -205,7 +218,7 @@ def _audit_algorithm(header: dict) -> list[Finding]:
             Finding(
                 Severity.WARN,
                 "alg",
-                f"alg {raw!r} is not the registered spelling {alg!r} — strict verifiers "
+                f"alg {raw!r} is not the registered spelling {alg!r}: strict verifiers "
                 "reject it, and one that accepts it is normalizing untrusted input",
                 "Emit the exact registered name; alg is case-sensitive (RFC 7515 4.1.1).",
             )
@@ -215,7 +228,7 @@ def _audit_algorithm(header: dict) -> list[Finding]:
             Finding(
                 Severity.WARN,
                 "alg",
-                f"{alg} is symmetric — the shared secret must be strong or it can be brute-forced",
+                f"{alg} is symmetric: the shared secret must be strong or it can be brute-forced",
                 "Use a cryptographically strong secret (jwt-toolkit generate-secret) "
                 "or migrate to an asymmetric algorithm.",
             )
@@ -244,13 +257,13 @@ def _audit_algorithm(header: dict) -> list[Finding]:
     return findings
 
 
-def _audit_typ(header: dict) -> list[Finding]:
+def _audit_typ(header: JsonObject) -> list[Finding]:
     if "typ" not in header:
         return [
             Finding(
                 Severity.INFO,
                 "typ",
-                "No typ header — consumers cannot distinguish JWTs from other JOSE objects",
+                "No typ header: consumers cannot distinguish JWTs from other JOSE objects",
             )
         ]
     typ = str(header["typ"]).upper()
@@ -266,7 +279,7 @@ def _audit_typ(header: dict) -> list[Finding]:
     ]
 
 
-def _audit_kid_injection(header: dict) -> list[Finding]:
+def _audit_kid_injection(header: JsonObject) -> list[Finding]:
     kid = header.get("kid")
     if kid is None:
         return []
@@ -275,7 +288,7 @@ def _audit_kid_injection(header: dict) -> list[Finding]:
             Finding(
                 Severity.WARN,
                 "kid",
-                f"kid is not a string ({type(kid).__name__}) — verifiers may mishandle it",
+                f"kid is not a string ({type(kid).__name__}): verifiers may mishandle it",
             )
         ]
     hit = next((c for c in _KID_DANGEROUS_CHARS if c in kid), None)
@@ -284,7 +297,7 @@ def _audit_kid_injection(header: dict) -> list[Finding]:
             Finding(
                 Severity.CRITICAL,
                 "kid",
-                f"kid contains dangerous sequence {hit!r} — possible injection attempt",
+                f"kid contains dangerous sequence {hit!r}: possible injection attempt",
                 "Look up keys by exact match against an allow-list; never concatenate kid "
                 "into a path, SQL query, or shell command.",
             )
@@ -292,7 +305,7 @@ def _audit_kid_injection(header: dict) -> list[Finding]:
     return [Finding(Severity.PASS, "kid", "kid looks well-formed")]
 
 
-def _audit_header_key_smuggling(header: dict) -> list[Finding]:
+def _audit_header_key_smuggling(header: JsonObject) -> list[Finding]:
     findings: list[Finding] = []
     for name in _KEY_SMUGGLING_HEADERS:
         if name not in header:
@@ -303,19 +316,22 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
                 Finding(
                     Severity.CRITICAL,
                     "jwk",
-                    f"Header embeds a JWK — an attacker can ship their own key with the token ({_CVE_JWK_INJECTION})",
+                    f"Header embeds a JWK: an attacker can ship their own key with the token ({_CVE_JWK_INJECTION})",
                     "Ignore the embedded jwk header; resolve keys from a server-side trust store.",
                 )
             )
             continue
-        # jku, x5u, x5c — URLs to remote key material.
+        if name == "x5c":
+            findings.append(_audit_x5c(value))
+            continue
+        # jku and x5u point at remote key material.
         url = str(value) if not isinstance(value, list) else (value[0] if value else "")
         if isinstance(url, str) and url.lower().startswith("http://"):
             findings.append(
                 Finding(
                     Severity.CRITICAL,
                     name,
-                    f"{name} uses plain HTTP — key material can be MITM'd",
+                    f"{name} uses plain HTTP: key material can be MITM'd",
                     f"Require HTTPS for {name}, and pin to an allow-list of hosts.",
                 )
             )
@@ -331,10 +347,28 @@ def _audit_header_key_smuggling(header: dict) -> list[Finding]:
     return findings
 
 
+def _audit_x5c(value: object) -> Finding:
+    # RFC 7515 4.1.6: x5c embeds the signer's certificate chain in the token itself.
+    if not isinstance(value, list) or not value or not all(isinstance(c, str) for c in value):
+        return Finding(
+            Severity.WARN,
+            "x5c",
+            "x5c header is malformed: RFC 7515 requires a non-empty list of certificates",
+            "Reject the token; a malformed x5c cannot be validated.",
+        )
+    return Finding(
+        Severity.WARN,
+        "x5c",
+        "Header embeds a certificate chain (x5c): a verifier that trusts it without "
+        "validating the chain to a pinned root accepts any key the sender chooses",
+        "Validate x5c against a pinned trust anchor, or ignore it and resolve keys server-side.",
+    )
+
+
 # Cross-check: HS* algorithm combined with header-supplied key material is the
 # classic key-confusion shape — the verifier may resolve the "public key" from
 # the header and then use it as an HMAC secret.
-def _audit_alg_key_confusion(header: dict) -> list[Finding]:
+def _audit_alg_key_confusion(header: JsonObject) -> list[Finding]:
     # Case-insensitive on purpose: hs256 beside a smuggled key is the same shape.
     raw = header.get("alg")
     alg = canonical_algorithm(raw) if isinstance(raw, str) else None
@@ -347,7 +381,7 @@ def _audit_alg_key_confusion(header: dict) -> list[Finding]:
         Finding(
             Severity.CRITICAL,
             "alg",
-            f"alg={alg} combined with {', '.join(smuggled)} header(s) — "
+            f"alg={alg} combined with {', '.join(smuggled)} header(s): "
             f"classic key-confusion shape ({_CVE_HS_RS_CONFUSION})",
             "Pin the verifier to one algorithm family per key; never resolve HMAC "
             "secrets from header-supplied key material.",
@@ -355,7 +389,7 @@ def _audit_alg_key_confusion(header: dict) -> list[Finding]:
     ]
 
 
-def _audit_crit(header: dict) -> list[Finding]:
+def _audit_crit(header: JsonObject) -> list[Finding]:
     if "crit" not in header:
         return []
     crit = header["crit"]
@@ -364,7 +398,7 @@ def _audit_crit(header: dict) -> list[Finding]:
             Finding(
                 Severity.CRITICAL,
                 "crit",
-                "crit header is malformed — RFC 7515 requires a non-empty list of strings",
+                "crit header is malformed: RFC 7515 requires a non-empty list of strings",
                 "Reject the token; a malformed crit is unparseable and unsafe to ignore.",
             )
         ]
@@ -373,7 +407,7 @@ def _audit_crit(header: dict) -> list[Finding]:
             Finding(
                 Severity.WARN,
                 "crit",
-                "crit header is an empty list — RFC 7515 requires at least one entry",
+                "crit header is an empty list: RFC 7515 requires at least one entry",
                 "Reject tokens with an empty crit list.",
             )
         ]
@@ -384,20 +418,20 @@ def _audit_crit(header: dict) -> list[Finding]:
                 Severity.CRITICAL,
                 "crit",
                 f"crit lists parameter(s) not present in the header: {dangling}",
-                "Reject the token — every name in crit must be a recognised, present header parameter.",
+                "Reject the token: every name in crit must be a recognised, present header parameter.",
             )
         ]
     return [
         Finding(
             Severity.WARN,
             "crit",
-            f"crit header is present ({crit}) — many verifiers silently ignore it",
+            f"crit header is present ({crit}): many verifiers silently ignore it",
             "Confirm the verifier rejects tokens whose crit extensions it does not implement.",
         )
     ]
 
 
-def _audit_b64(header: dict) -> list[Finding]:
+def _audit_b64(header: JsonObject) -> list[Finding]:
     if "b64" not in header:
         return []
     b64 = header["b64"]
@@ -406,7 +440,7 @@ def _audit_b64(header: dict) -> list[Finding]:
             Finding(
                 Severity.WARN,
                 "b64",
-                "b64:false (RFC 7797) — payload is not base64url-encoded; "
+                "b64:false (RFC 7797): payload is not base64url-encoded; "
                 "many verifiers mishandle this form",
                 "Reject tokens with b64:false unless the verifier explicitly implements RFC 7797.",
             )
@@ -416,20 +450,19 @@ def _audit_b64(header: dict) -> list[Finding]:
             Finding(
                 Severity.INFO,
                 "b64",
-                "b64:true is the default — the header is redundant but harmless",
+                "b64:true is the default: the header is redundant but harmless",
             )
         ]
     return [
         Finding(
             Severity.WARN,
             "b64",
-            f"b64 header has non-boolean value ({type(b64).__name__}) — RFC 7797 requires a boolean",
+            f"b64 header has non-boolean value ({type(b64).__name__}): RFC 7797 requires a boolean",
         )
     ]
 
 
-# Payload checks
-def _audit_expiry(payload: dict) -> list[Finding]:
+def _audit_expiry(payload: JsonObject) -> list[Finding]:
     exp = payload.get("exp")
     iat = payload.get("iat")
     if exp is None:
@@ -437,11 +470,11 @@ def _audit_expiry(payload: dict) -> list[Finding]:
             Finding(
                 Severity.WARN,
                 "exp",
-                "No exp claim — token never expires",
+                "No exp claim: token never expires",
                 "Always set exp; short-lived tokens limit blast radius if leaked.",
             )
         ]
-    if not _is_numeric_date(exp):
+    if not is_numeric_date(exp):
         return [Finding(Severity.WARN, "exp", f"exp is not numeric ({type(exp).__name__})")]
 
     now = time.time()
@@ -449,7 +482,7 @@ def _audit_expiry(payload: dict) -> list[Finding]:
         return [Finding(Severity.CRITICAL, "exp", "Token is expired")]
 
     # Lifetime measured from iat when available, otherwise from now.
-    lifetime = exp - (iat if _is_numeric_date(iat) else now)
+    lifetime = exp - (iat if is_numeric_date(iat) else now)
     for threshold, suffix in _LIFETIME_TIERS:
         if lifetime > threshold:
             severity = (
@@ -470,55 +503,50 @@ def _audit_expiry(payload: dict) -> list[Finding]:
     return [Finding(Severity.PASS, "exp", "Token expiry looks reasonable")]
 
 
-def _audit_nbf(payload: dict) -> list[Finding]:
+def _audit_nbf(payload: JsonObject) -> list[Finding]:
     nbf = payload.get("nbf")
     if nbf is None:
         return []
-    if not _is_numeric_date(nbf):
+    if not is_numeric_date(nbf):
         return [Finding(Severity.WARN, "nbf", f"nbf is not numeric ({type(nbf).__name__})")]
     if time.time() < nbf:
         return [Finding(Severity.CRITICAL, "nbf", "Token is not yet valid (nbf is in the future)")]
     return [Finding(Severity.PASS, "nbf", "Token is past its not-before time")]
 
 
-def _audit_iat(payload: dict) -> list[Finding]:
+def _audit_iat(payload: JsonObject) -> list[Finding]:
     iat = payload.get("iat")
     if iat is None:
         return []
-    if not _is_numeric_date(iat):
+    if not is_numeric_date(iat):
         return [Finding(Severity.WARN, "iat", f"iat is not numeric ({type(iat).__name__})")]
     exp = payload.get("exp")
-    if _is_numeric_date(exp) and exp < iat:
+    if is_numeric_date(exp) and exp < iat:
         return [
             Finding(
                 Severity.CRITICAL,
                 "iat",
-                "exp is earlier than iat — token is malformed and may be rejected unpredictably",
+                "exp is earlier than iat: token is malformed and may be rejected unpredictably",
             )
         ]
-    if iat > time.time() + _IAT_FUTURE_LEEWAY_SECONDS:
+    if iat > time.time() + IAT_FUTURE_LEEWAY_SECONDS:
         return [
             Finding(
                 Severity.WARN,
                 "iat",
-                "iat is in the future — clock skew or a forged token",
+                "iat is in the future: clock skew or a forged token",
             )
         ]
     return [Finding(Severity.PASS, "iat", "iat looks sane")]
 
 
-def _is_numeric_date(value: object) -> bool:
-    # bool subclasses int in Python, but true/false is not a NumericDate.
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _audit_jti(payload: dict, *, required: bool = False) -> list[Finding]:
+def _audit_jti(payload: JsonObject, *, required: bool = False) -> list[Finding]:
     if "jti" not in payload:
         return [
             Finding(
                 Severity.WARN if required else Severity.INFO,
                 "jti",
-                "No jti claim — replay-defense via a token blocklist is harder",
+                "No jti claim: replay-defense via a token blocklist is harder",
                 "Issue a unique jti per token so revocation and replay-detection are possible.",
             )
         ]
@@ -529,7 +557,7 @@ _DEFAULT_CLAIMS = frozenset({"iss", "aud", "iat"})
 
 
 def _audit_claims(
-    payload: dict,
+    payload: JsonObject,
     *,
     required_claims: frozenset[str] = frozenset(),
 ) -> list[Finding]:
@@ -545,12 +573,52 @@ def _audit_claims(
     return findings
 
 
-def _audit_sensitive_fields(payload: dict) -> list[Finding]:
+def _audit_claim_types(payload: JsonObject) -> list[Finding]:
+    # RFC 7519 4.1.1-4.1.3: iss and sub are StringOrURI; aud is one or a list of them.
+    findings: list[Finding] = []
+    for claim in ("iss", "sub"):
+        if claim in payload and not isinstance(payload[claim], str):
+            findings.append(
+                Finding(
+                    Severity.WARN,
+                    claim,
+                    f"{claim} is a {_json_type(payload[claim])}, but RFC 7519 requires a string",
+                    "Emit the claim as a string; verifiers may compare it unpredictably.",
+                )
+            )
+    aud = payload.get("aud")
+    if "aud" in payload and not (
+        isinstance(aud, str) or (isinstance(aud, list) and all(isinstance(a, str) for a in aud))
+    ):
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "aud",
+                f"aud is a {_json_type(aud)}, but RFC 7519 requires a string or a list of strings",
+                "Emit aud as a string or a list of strings so audience checks match it.",
+            )
+        )
+    return findings
+
+
+def _json_type(value: object) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, list):
+        return "list" if all(isinstance(v, str) for v in value) else "list with non-strings"
+    if value is None:
+        return "null"
+    return "object" if isinstance(value, dict) else "string"
+
+
+def _audit_sensitive_fields(payload: JsonObject) -> list[Finding]:
     return [
         Finding(
             Severity.WARN,
             key,
-            f"Payload contains sensitive field {key!r} — JWTs are encoded, not encrypted",
+            f"Payload contains sensitive field {key!r}: JWTs are encoded, not encrypted",
             "Move secrets out of the payload; pass them via a confidential side-channel.",
         )
         for key in payload
@@ -558,7 +626,7 @@ def _audit_sensitive_fields(payload: dict) -> list[Finding]:
     ]
 
 
-def _audit_sensitive_values(payload: dict) -> list[Finding]:
+def _audit_sensitive_values(payload: JsonObject) -> list[Finding]:
     # Walks nested dicts/lists looking for values that *look* like PII even when
     # the surrounding field name doesn't tip us off. Top-level keys already
     # caught by _audit_sensitive_fields are skipped to avoid duplicate findings.
@@ -600,13 +668,13 @@ def _audit_sensitive_values(payload: dict) -> list[Finding]:
                 "payload",
                 f"Credit-card-like value{'' if len(card_paths) == 1 else 's'} "
                 f"(Luhn-valid) at {label}: " + ", ".join(card_paths),
-                "Never place card data in a JWT — it is base64, not encryption.",
+                "Never place card data in a JWT: it is base64, not encryption.",
             )
         )
     return findings
 
 
-def _walk(node, prefix: str = "") -> Iterator[tuple[str, object]]:
+def _walk(node: object, prefix: str = "") -> Iterator[tuple[str, object]]:
     # Yields (dotted_path, value) for every leaf and container in a JSON-like tree.
     if isinstance(node, dict):
         for key, value in node.items():
@@ -631,3 +699,78 @@ def _looks_like_card(digits: str) -> bool:
                 n -= 9
         total += n
     return total % 10 == 0
+
+
+def _audit_signature(header: JsonObject, signature: str | None) -> list[Finding]:
+    # A signed algorithm with nothing after the last dot is a stripped signature.
+    if signature is None or signature:
+        return []
+    alg = header.get("alg")
+    if isinstance(alg, str) and alg.upper() == "NONE":
+        return []
+    return [
+        Finding(
+            Severity.CRITICAL,
+            "signature",
+            f"alg is {alg!r} but the token carries no signature (stripped-signature attack shape)",
+            "The verifier must reject any token whose signature is missing.",
+        )
+    ]
+
+
+# Key-material findings describe the key; they never include secret material.
+
+
+def audit_hmac_secret(secret: bytes, alg: str, *, in_common_wordlist: bool) -> list[Finding]:
+    findings: list[Finding] = []
+    if in_common_wordlist:
+        findings.append(
+            Finding(
+                Severity.CRITICAL,
+                "secret",
+                "The HMAC secret is in the bundled common-secrets wordlist, so anyone "
+                "can forge tokens",
+                "Rotate it now to a random secret: jwt-toolkit generate-secret",
+            )
+        )
+    minimum = _MIN_HMAC_SECRET_BYTES.get(alg)
+    if minimum is not None and len(secret) < minimum:
+        findings.append(
+            Finding(
+                Severity.WARN,
+                "secret",
+                f"The HMAC secret is {len(secret)} bytes; RFC 7518 3.2 requires at least "
+                f"{minimum} bytes for {alg}",
+                f"Use a random secret of at least {minimum * 8} bits: "
+                f"jwt-toolkit generate-secret --bits {minimum * 8}",
+            )
+        )
+    if not findings:
+        findings.append(Finding(Severity.PASS, "secret", "HMAC secret length meets RFC 7518 3.2"))
+    return findings
+
+
+def audit_public_key(pem: bytes) -> list[Finding]:
+    # Size is the one property a verifier's key can be judged on statically.
+    key: PublicKeyTypes
+    try:
+        if b"-----BEGIN CERTIFICATE-----" in pem:
+            key = x509.load_pem_x509_certificate(pem).public_key()
+        else:
+            key = serialization.load_pem_public_key(pem)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(key, rsa.RSAPublicKey):
+        return []
+    if key.key_size < _MIN_RSA_KEY_BITS:
+        return [
+            Finding(
+                Severity.CRITICAL,
+                "key",
+                f"RSA key is {key.key_size} bits; keys under {_MIN_RSA_KEY_BITS} bits are "
+                "considered breakable (NIST SP 800-131A)",
+                f"Issue a new RSA key of at least {_MIN_RSA_KEY_BITS} bits, or move to ES256 "
+                "or Ed25519.",
+            )
+        ]
+    return [Finding(Severity.PASS, "key", f"RSA key is {key.key_size} bits")]

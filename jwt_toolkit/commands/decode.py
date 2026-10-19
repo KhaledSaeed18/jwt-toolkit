@@ -10,15 +10,14 @@ from rich.text import Text
 
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.timestamps import describe_time_claims
-
-# Decode command — pretty-print the header and payload of a JWT without audit noise.
 
 
 @click.command(help="Decode a JWT and pretty-print its header and payload.")
 @click.argument("token")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def decode(token: str, as_json: bool):
+def decode(token: str, as_json: bool) -> None:
     token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
 
@@ -62,7 +61,7 @@ def decode(token: str, as_json: bool):
     )
 
 
-def _time_claims_table(payload: dict) -> Table | None:
+def _time_claims_table(payload: JsonObject) -> Table | None:
     claims = describe_time_claims(payload, now=time.time())
     if not claims:
         return None

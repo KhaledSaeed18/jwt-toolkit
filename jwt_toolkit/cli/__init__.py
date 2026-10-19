@@ -3,7 +3,7 @@ import os
 import click
 
 from jwt_toolkit import __version__
-from jwt_toolkit.cli.banner import render_banner, render_help
+from jwt_toolkit.cli.banner import COMMANDS, EXAMPLES, render_banner, render_help
 from jwt_toolkit.commands.audit import audit
 from jwt_toolkit.commands.crack import crack
 from jwt_toolkit.commands.decode import decode
@@ -14,47 +14,29 @@ from jwt_toolkit.commands.generate_secret import generate_secret
 from jwt_toolkit.commands.sign import sign
 from jwt_toolkit.commands.verify import verify
 
-CLI_HELP = """\
-JWT Toolkit — a command-line toolkit for inspecting, verifying, cracking,
-and securing JSON Web Tokens.
+CLI_HELP = (
+    "JWT Toolkit: a command-line toolkit for inspecting, verifying, cracking, "
+    "and securing JSON Web Tokens.\n\n"
+    "Built to expose how JWT signing works and where it breaks. Use it to audit tokens "
+    "for misconfigurations, verify signatures and standard claims, brute-force weak HMAC "
+    "secrets against a wordlist, and generate cryptographically strong secrets.\n\n"
+    "\b\nCommands:\n"
+    + "\n".join(f"  {name:<20}{summary}" for name, summary in COMMANDS)
+    + "\n\n\b\nExamples:\n"
+    + "\n".join(f"  {command}" for _, command in EXAMPLES)
+    + "\n\nRun `jwt-toolkit COMMAND --help` for command-specific options.\n"
+)
 
-Built to expose how JWT signing works and where it breaks. Use it to audit
-tokens for misconfigurations, verify signatures and standard claims,
-brute-force weak HMAC secrets against a wordlist, and generate
-cryptographically strong secrets.
 
-\b
-Commands:
-  decode              Decode a JWT and pretty-print its header and payload.
-  sign                Mint a new JWT from a payload and HMAC secret.
-  audit               Static security analysis of a JWT (no key required).
-  verify              Verify the signature and standard claims of a JWT.
-  diff                Compare two JWTs and show which fields changed.
-  forge               Emit defensive attack-shaped variants of a JWT for self-audit.
-  crack               Brute-force a weak HMAC secret using a wordlist.
-  generate-secret     Emit a cryptographically strong random secret.
-  download-wordlists  Fetch the common-secrets wordlist for this release.
-
-\b
-Examples:
-  jwt-toolkit decode <token>
-  jwt-toolkit sign --payload '{"sub":"1"}' --secret mysecret
-  jwt-toolkit audit <token>
-  jwt-toolkit audit <token> --strict --json
-  jwt-toolkit verify <token> --secret <secret> --issuer auth.example.com
-  jwt-toolkit verify <token> --jwks-url https://auth.example/.well-known/jwks.json
-  jwt-toolkit diff @before.jwt @after.jwt
-  jwt-toolkit forge <token> --public-key key.pub.pem
-  jwt-toolkit crack <token>
-  jwt-toolkit crack <token> rockyou.txt --workers 4
-  jwt-toolkit generate-secret --bits 256 --encoding base64
-  jwt-toolkit download-wordlists --output-dir wordlists
-
-Run `jwt-toolkit COMMAND --help` for command-specific options.
-"""
+class _ToolkitGroup(click.Group):
+    # CLI_HELP already lists every command with its full summary; Click's own
+    # list would repeat it with truncated text.
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        pass
 
 
 @click.group(
+    cls=_ToolkitGroup,
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
     help=CLI_HELP,
@@ -74,7 +56,7 @@ Run `jwt-toolkit COMMAND --help` for command-specific options.
     "--quiet",
     is_flag=True,
     envvar="JWT_TOOLKIT_QUIET",
-    help="Suppress banner and non-essential output; useful for scripting.",
+    help="Keep results and errors, drop the banner, progress, and hints (also: JWT_TOOLKIT_QUIET=1).",
 )
 @click.option(
     "--no-color",
@@ -83,12 +65,13 @@ Run `jwt-toolkit COMMAND --help` for command-specific options.
     help="Disable color output (also: NO_COLOR=1).",
 )
 @click.pass_context
-def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool):
-    # Set env vars before the lazy console is first used by any subcommand.
-    if no_color:
-        os.environ["NO_COLOR"] = "1"
-    if quiet:
-        os.environ["JWT_TOOLKIT_QUIET"] = "1"
+def cli(ctx: click.Context, no_banner: bool, quiet: bool, no_color: bool) -> None:
+    # The lazy consoles read these at print time. They are removed again when the
+    # command finishes so in-process callers do not inherit them.
+    for name, enabled in (("NO_COLOR", no_color), ("JWT_TOOLKIT_QUIET", quiet)):
+        if enabled and name not in os.environ:
+            os.environ[name] = "1"
+            ctx.call_on_close(lambda name=name: os.environ.pop(name, None))
 
     # The banner is only rendered for the bare `jwt-toolkit` invocation.
     # Printing it for every subcommand would corrupt --json output and noisily

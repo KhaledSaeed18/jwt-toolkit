@@ -6,9 +6,9 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
-from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.cli.console import console, status_console
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
+from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.forge import (
     ALL_VARIANT_NAMES,
     KEY_BASED_VARIANT_NAMES,
@@ -17,10 +17,6 @@ from jwt_toolkit.core.forge import (
     forge_one,
     generate_variants,
 )
-
-# Forge command — generates defensive test-case variants of a JWT so the user
-# can confirm their verifier rejects each one. Output is grouped by variant.
-
 
 _INTRO = (
     "These variants are designed to be REJECTED by a correctly configured verifier. "
@@ -61,7 +57,7 @@ _INTRO = (
     is_flag=True,
     help="Emit a machine-readable JSON document instead of the rich table.",
 )
-def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: bool):
+def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: bool) -> None:
     token = resolve_token(token, as_json=as_json)
     decoded = safe_decode(token, as_json=as_json)
 
@@ -70,7 +66,9 @@ def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: b
     try:
         variants = _select_variants(decoded, pem=pem, mode=mode)
     except ValueError as exc:
-        print_error(str(exc), title="Forge Error")
+        emit_error(
+            code="invalid_key_options", title="Forge Error", headline=str(exc), as_json=as_json
+        )
         raise SystemExit(2) from exc
 
     if as_json:
@@ -79,7 +77,9 @@ def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: b
         _emit_rich(variants, has_public_key=pem is not None)
 
 
-def _select_variants(decoded, *, pem: bytes | None, mode: str | None) -> list[Variant]:
+def _select_variants(
+    decoded: DecodedToken, *, pem: bytes | None, mode: str | None
+) -> list[Variant]:
     if mode is not None:
         return [forge_one(mode, decoded, public_key_pem=pem)]
     names = STATIC_VARIANT_NAMES if pem is None else STATIC_VARIANT_NAMES + KEY_BASED_VARIANT_NAMES
@@ -107,7 +107,7 @@ def _emit_json(variants: list[Variant], *, has_public_key: bool) -> None:
 
 
 def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
-    console.print(Panel(_INTRO, title="Forge — defensive test cases", border_style="blue"))
+    console.print(Panel(_INTRO, title="Forge: defensive test cases", border_style="blue"))
 
     table = Table(title="Variants", show_lines=True)
     table.add_column("Name", style="bold", width=20)
@@ -115,7 +115,7 @@ def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
     table.add_column("Description")
     for v in variants:
         name = f"{v.name}\n[dim](header-only)[/dim]" if v.header_only else v.name
-        table.add_row(name, v.cve or "—", v.description)
+        table.add_row(name, v.cve or "n/a", v.description)
     console.print(table)
 
     for v in variants:
@@ -129,7 +129,7 @@ def _emit_rich(variants: list[Variant], *, has_public_key: bool) -> None:
         )
 
     if not has_public_key:
-        console.print(
+        status_console.print(
             Panel(
                 "[dim]Pass --public-key to also emit the hs_rs_confusion variant "
                 "(CVE-2016-10555).[/dim]",

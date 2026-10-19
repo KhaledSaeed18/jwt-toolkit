@@ -56,3 +56,7 @@ def test_canonical_algorithm_is_case_insensitive_for_known_names():
     assert canonical_algorithm("Rs512") == "RS512"
     assert canonical_algorithm("none") is None
     assert canonical_algorithm("HS999") is None
+
+
+def test_verify_signature_rejects_non_ascii_signature():
+    assert verify_signature("e30", "e30", "sigé\udcff", "secret") is False

@@ -1,5 +1,6 @@
 import re
 
+from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import ClaimConflictError, InvalidDurationError
 
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86_400, "w": 604_800}
@@ -23,7 +24,7 @@ def parse_duration(text: str) -> int:
     return seconds
 
 
-def with_lifetime(payload: dict, *, lifetime_seconds: int, now: int) -> dict:
+def with_lifetime(payload: JsonObject, *, lifetime_seconds: int, now: int) -> JsonObject:
     # iat and exp come from one clock reading so the lifetime is exact.
     conflicts = [claim for claim in ("iat", "exp") if claim in payload]
     if conflicts:

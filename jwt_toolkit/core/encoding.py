@@ -1,9 +1,13 @@
 import base64
+import binascii
 import json
 import math
+from typing import Any
 
-# base64url encode/decode helpers — JWT strips '=' padding by spec, so every
-# encode trims it and every decode restores it.
+# JWT strips '=' padding by spec, so every encode trims it and every decode restores it.
+
+# A decoded JSON object, such as a JWT header or claims set.
+type JsonObject = dict[str, Any]
 
 
 def _pad(value: str) -> str:
@@ -15,6 +19,9 @@ def base64url_encode(value: bytes) -> str:
 
 
 def base64url_decode(value: str) -> bytes:
+    # The stdlib raises a bare ValueError for non-ASCII input; callers expect binascii.Error.
+    if not value.isascii():
+        raise binascii.Error("base64url input must be ASCII")
     return base64.urlsafe_b64decode(_pad(value))
 
 
