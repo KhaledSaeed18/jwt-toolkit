@@ -222,3 +222,6 @@ __marimo__/
 
 # Code editor
 .vscode/
+
+# Private planning notes
+/.project-planning/
