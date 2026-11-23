@@ -23,6 +23,10 @@ If anything here is unclear, open a documentation issue using the [Documentation
 
 Be respectful, be patient, and assume good intent. Personal attacks, harassment, and discriminatory language are not acceptable in any project space, including issues, pull requests, discussions, and commit messages.
 
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). Report unacceptable behavior to the contact listed there.
+
+Accessibility barriers are bugs. [ACCESSIBILITY.md](ACCESSIBILITY.md) describes what the CLI aims for and how to report one; a change to human-readable output should keep every verdict in words and keep `NO_COLOR` free of escape codes.
+
 ## Project scope
 
 `jwt-toolkit` is a defensive command-line tool for inspecting, verifying, auditing, and stress-testing JSON Web Tokens. Contributions that fit this scope are welcome:
@@ -86,13 +90,17 @@ jwt-toolkit/
 ├── wordlists/                # Bundled wordlist resources
 ├── assets/                   # README images and demo assets
 ├── .github/
-│   ├── ISSUE_TEMPLATE/       # Issue forms (bug, feature, docs)
-│   ├── workflows/            # CI and publish workflows
+│   ├── ISSUE_TEMPLATE/       # Issue forms (bug, feature, docs, accessibility)
+│   ├── workflows/            # CI, release (release-please + PyPI) and PR-title workflows
 │   ├── dependabot.yml        # Dependency update config
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── pyproject.toml            # Build, dependencies, ruff, mypy, pytest, bandit config
 ├── Makefile                  # Developer command shortcuts
 ├── uv.lock                   # Locked dependency tree (managed by uv)
+├── CHANGELOG.md              # Written by release-please
+├── ACCESSIBILITY.md          # Accessibility statement
+├── CODE_OF_CONDUCT.md        # Contributor Covenant 2.1
+├── SECURITY.md               # Supported versions and private vulnerability reporting
 └── README.md
 ```
 
