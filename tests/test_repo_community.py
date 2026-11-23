@@ -16,11 +16,11 @@ def test_community_file_exists(name):
 
 @pytest.mark.parametrize("name", ["CODE_OF_CONDUCT.md", "ACCESSIBILITY.md"])
 def test_readme_and_contributing_link_the_community_files(name):
-    assert name in (ROOT / "README.md").read_text()
-    assert name in (ROOT / "CONTRIBUTING.md").read_text()
+    assert name in (ROOT / "README.md").read_text(encoding="utf-8")
+    assert name in (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
 
 
 def test_accessibility_statement_points_at_its_issue_form():
-    statement = (ROOT / "ACCESSIBILITY.md").read_text()
+    statement = (ROOT / "ACCESSIBILITY.md").read_text(encoding="utf-8")
     assert "template=accessibility.yml" in statement
     assert (ROOT / ".github" / "ISSUE_TEMPLATE" / "accessibility.yml").is_file()

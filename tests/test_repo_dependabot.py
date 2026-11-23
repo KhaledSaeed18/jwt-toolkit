@@ -10,7 +10,7 @@ NON_RELEASING = {"build", "ci", "chore", "test", "refactor", "style"}
 
 
 def _config() -> str:
-    return (ROOT / ".github" / "dependabot.yml").read_text()
+    return (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
 
 
 def test_dependabot_commit_prefixes_do_not_release():
