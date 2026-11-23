@@ -9,9 +9,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 
+from jwt_toolkit.core.algorithms import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
+from jwt_toolkit.core.algorithms import SUPPORTED_ALGORITHMS, canonical_algorithm
 from jwt_toolkit.core.claims import IAT_FUTURE_LEEWAY_SECONDS, is_numeric_date
-from jwt_toolkit.core.crypto import ASYMMETRIC_ALGORITHMS as _SIGNING_ASYMMETRIC_ALGORITHMS
-from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS, canonical_algorithm
 from jwt_toolkit.core.encoding import JsonObject
 
 # Symmetric algorithms — vulnerable to offline brute-force if the secret is weak.

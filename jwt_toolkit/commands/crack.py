@@ -23,8 +23,8 @@ from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.cli.errors import ToolkitCommand
 from jwt_toolkit.cli.wordlists import BUNDLED_WORDLIST_NAME, bundled_wordlist
+from jwt_toolkit.core.algorithms import SUPPORTED_ALGORITHMS
 from jwt_toolkit.core.cracker import MIN_PARALLEL_CANDIDATES, find_secret
-from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
 from jwt_toolkit.core.encoding import base64url_decode
 from jwt_toolkit.core.errors import JwtToolkitError
 from jwt_toolkit.core.wordlist import (

@@ -9,11 +9,8 @@ from click.core import ParameterSource
 from jwt_toolkit.cli.algorithms import is_asymmetric, is_hmac
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.errors import ToolkitCommand, reported_as
-from jwt_toolkit.core.crypto import (
-    ALL_SIGNING_ALGORITHMS,
-    algorithm_for_private_key,
-    canonical_algorithm,
-)
+from jwt_toolkit.core.algorithms import ALL_SIGNING_ALGORITHMS, canonical_algorithm
+from jwt_toolkit.core.crypto import algorithm_for_private_key
 from jwt_toolkit.core.crypto import (
     sign as _sign_hmac,
 )

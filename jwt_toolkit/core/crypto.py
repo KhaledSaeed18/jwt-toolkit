@@ -1,6 +1,4 @@
-import hashlib
 import hmac
-from collections.abc import Callable
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -12,6 +10,19 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     encode_dss_signature,
 )
 
+from jwt_toolkit.core.algorithms import (
+    ALGORITHMS,
+    ALL_SIGNING_ALGORITHMS,
+    ASYMMETRIC_ALGORITHMS,
+    EC_ALGORITHMS,
+    OKP_ALGORITHMS,
+    PSS_ALGORITHMS,
+    RSA_ALGORITHMS,
+    SUPPORTED_ALGORITHMS,
+    AlgorithmSpec,
+    algorithm_spec,
+    canonical_algorithm,
+)
 from jwt_toolkit.core.encoding import base64url_decode, base64url_encode
 from jwt_toolkit.core.errors import (
     KeyAlgorithmMismatchError,
@@ -20,28 +31,23 @@ from jwt_toolkit.core.errors import (
     UnsupportedAlgorithmError,
 )
 
-# HMAC algorithms — symmetric, shared-secret. Kept as a dict so `crack` can iterate
-# `(alg, digestmod)` directly. Public API: do not rename.
-SUPPORTED_ALGORITHMS = {
-    "HS256": hashlib.sha256,
-    "HS384": hashlib.sha384,
-    "HS512": hashlib.sha512,
-}
-
-# Asymmetric algorithm families — split by primitive so dispatchers can branch
-# without re-deriving the family from the alg string.
-RSA_ALGORITHMS = frozenset({"RS256", "RS384", "RS512"})
-EC_ALGORITHMS = frozenset({"ES256", "ES384", "ES512"})
-PSS_ALGORITHMS = frozenset({"PS256", "PS384", "PS512"})
-# RFC 8037 EdDSA. RFC 9864 deprecates the polymorphic "EdDSA" in favour of the
-# fully-specified Ed25519/Ed448, but existing deployments still emit it.
-OKP_ALGORITHMS = frozenset({"EdDSA", "Ed25519", "Ed448"})
-ASYMMETRIC_ALGORITHMS = RSA_ALGORITHMS | EC_ALGORITHMS | PSS_ALGORITHMS | OKP_ALGORITHMS
-
-# Union of every algorithm the toolkit can produce or verify a signature for.
-ALL_SIGNING_ALGORITHMS = frozenset(SUPPORTED_ALGORITHMS) | ASYMMETRIC_ALGORITHMS
-
-_CANONICAL_BY_UPPER = {name.upper(): name for name in ALL_SIGNING_ALGORITHMS}
+# The algorithm tables are derived from the registry in core/algorithms.py and
+# re-exported here, where callers have always imported them from. Public API.
+__all__ = [
+    "ALL_SIGNING_ALGORITHMS",
+    "ASYMMETRIC_ALGORITHMS",
+    "EC_ALGORITHMS",
+    "OKP_ALGORITHMS",
+    "PSS_ALGORITHMS",
+    "RSA_ALGORITHMS",
+    "SUPPORTED_ALGORITHMS",
+    "algorithm_for_private_key",
+    "canonical_algorithm",
+    "sign",
+    "sign_asymmetric",
+    "verify_asymmetric",
+    "verify_signature",
+]
 
 type _SigningPrivateKey = (
     rsa.RSAPrivateKey
@@ -66,56 +72,25 @@ _VERIFYING_PUBLIC_KEY_TYPES = (
 )
 
 
-def canonical_algorithm(name: str) -> str | None:
-    # Case-insensitive lookup for callers passing a user-typed name. Token
-    # headers must still match the registered spelling exactly (RFC 7515 4.1.1).
-    return _CANONICAL_BY_UPPER.get(name.upper())
+def _spec(alg: str) -> AlgorithmSpec:
+    spec = algorithm_spec(alg)
+    if spec is None:
+        raise UnsupportedAlgorithmError(f"Unsupported algorithm: {alg}")
+    return spec
 
 
-# Hash algorithm to use for each asymmetric alg. The trailing digits in the JWS
-# alg name (e.g. "RS256" → SHA-256) determine the hash, regardless of family.
-# Typed as a callable factory so mypy doesn't see the values as the abstract
-# `type[HashAlgorithm]` base — the dict holds concrete constructors.
-_HASH_BY_ALG: dict[str, Callable[[], hashes.HashAlgorithm]] = {
-    "RS256": hashes.SHA256,
-    "RS384": hashes.SHA384,
-    "RS512": hashes.SHA512,
-    "PS256": hashes.SHA256,
-    "PS384": hashes.SHA384,
-    "PS512": hashes.SHA512,
-    "ES256": hashes.SHA256,
-    "ES384": hashes.SHA384,
-    "ES512": hashes.SHA512,
-}
+def _hash(alg: str) -> hashes.HashAlgorithm:
+    factory = _spec(alg).hash
+    if factory is None:
+        raise UnsupportedAlgorithmError(f"{alg} does not use a separate hash")
+    return factory()
 
-# Required curve for each ES* alg per RFC 7518 §3.4. Other curves must be rejected
-# even if cryptography would otherwise accept them — using ES256 with SECP384R1
-# is a JWS compliance bug and would not interoperate.
-_EC_CURVE_BY_ALG: dict[str, type[ec.EllipticCurve]] = {
-    "ES256": ec.SECP256R1,
-    "ES384": ec.SECP384R1,
-    "ES512": ec.SECP521R1,
-}
 
-# Key classes accepted for each EdDSA alg; plain "EdDSA" takes its curve from the key.
-_OKP_PRIVATE_KEY_TYPES: dict[str, tuple[type, ...]] = {
-    "EdDSA": (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey),
-    "Ed25519": (ed25519.Ed25519PrivateKey,),
-    "Ed448": (ed448.Ed448PrivateKey,),
-}
-_OKP_PUBLIC_KEY_TYPES: dict[str, tuple[type, ...]] = {
-    "EdDSA": (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey),
-    "Ed25519": (ed25519.Ed25519PublicKey,),
-    "Ed448": (ed448.Ed448PublicKey,),
-}
-
-# Raw component size (in bytes) for each ES* signature. JWS ECDSA signatures are
-# fixed-width r || s; cryptography emits DER, so we must convert in both directions.
-_EC_RAW_SIG_HALF_BYTES = {
-    "ES256": 32,
-    "ES384": 48,
-    "ES512": 66,
-}
+def _ec_component_bytes(alg: str) -> int:
+    size = _spec(alg).ec_component_bytes
+    if size is None:
+        raise UnsupportedAlgorithmError(f"{alg} is not an ECDSA algorithm")
+    return size
 
 
 def sign(header_b64: str, payload_b64: str, secret: str, alg: str = "HS256") -> str:
@@ -197,9 +172,9 @@ def algorithm_for_private_key(pem: bytes, *, passphrase: bytes | None = None) ->
     if isinstance(key, rsa.RSAPrivateKey):
         return "RS256"
     if isinstance(key, ec.EllipticCurvePrivateKey):
-        for alg, curve in _EC_CURVE_BY_ALG.items():
-            if isinstance(key.curve, curve):
-                return alg
+        for spec in ALGORITHMS.values():
+            if spec.curve is not None and isinstance(key.curve, spec.curve):
+                return spec.name
         raise KeyAlgorithmMismatchError(f"EC curve {key.curve.name} has no JWS algorithm")
     if isinstance(key, ed25519.Ed25519PrivateKey):
         return "Ed25519"
@@ -267,14 +242,16 @@ def _ensure_key_matches_alg(
             raise KeyAlgorithmMismatchError(
                 f"{alg} requires an EC {role} key, got {type(key).__name__}"
             )
-        expected_curve = _EC_CURVE_BY_ALG[alg]
-        if not isinstance(key.curve, expected_curve):
+        expected_curve = _spec(alg).curve
+        if expected_curve is None or not isinstance(key.curve, expected_curve):
             raise KeyAlgorithmMismatchError(
-                f"{alg} requires curve {expected_curve.name}, got {key.curve.name}"
+                f"{alg} requires curve {expected_curve.name if expected_curve else '?'}, "
+                f"got {key.curve.name}"
             )
         return
     if alg in OKP_ALGORITHMS:
-        expected_okp = (_OKP_PRIVATE_KEY_TYPES if is_private else _OKP_PUBLIC_KEY_TYPES)[alg]
+        spec = _spec(alg)
+        expected_okp = spec.okp_private_types if is_private else spec.okp_public_types
         if not isinstance(key, expected_okp):
             curve = "an Ed25519 or Ed448" if alg == "EdDSA" else f"an {alg}"
             raise KeyAlgorithmMismatchError(
@@ -294,7 +271,7 @@ def _sign_with_private_key(private_key: _SigningPrivateKey, message: bytes, alg:
     if isinstance(private_key, ed25519.Ed25519PrivateKey | ed448.Ed448PrivateKey):
         # EdDSA hashes internally and emits the raw RFC 8032 signature.
         return private_key.sign(message)
-    hash_alg = _HASH_BY_ALG[alg]()
+    hash_alg = _hash(alg)
     if isinstance(private_key, rsa.RSAPrivateKey):
         pad = _pss_padding(hash_alg) if alg in PSS_ALGORITHMS else padding.PKCS1v15()
         return private_key.sign(message, pad, hash_alg)
@@ -309,13 +286,13 @@ def _verify_with_public_key(
     if isinstance(public_key, ed25519.Ed25519PublicKey | ed448.Ed448PublicKey):
         public_key.verify(raw_sig, message)
         return
-    hash_alg = _HASH_BY_ALG[alg]()
+    hash_alg = _hash(alg)
     if isinstance(public_key, rsa.RSAPublicKey):
         pad = _pss_padding(hash_alg) if alg in PSS_ALGORITHMS else padding.PKCS1v15()
         public_key.verify(raw_sig, message, pad, hash_alg)
         return
     # JWS r || s is fixed-width; reject anything else before decoding.
-    expected_len = _EC_RAW_SIG_HALF_BYTES[alg] * 2
+    expected_len = _ec_component_bytes(alg) * 2
     if len(raw_sig) != expected_len:
         raise InvalidSignature(
             f"ECDSA signature length {len(raw_sig)} != expected {expected_len} for {alg}"
@@ -326,12 +303,12 @@ def _verify_with_public_key(
 
 def _ec_der_to_raw(der: bytes, alg: str) -> bytes:
     r, s = decode_dss_signature(der)
-    half = _EC_RAW_SIG_HALF_BYTES[alg]
+    half = _ec_component_bytes(alg)
     return r.to_bytes(half, "big") + s.to_bytes(half, "big")
 
 
 def _ec_raw_to_der(raw: bytes, alg: str) -> bytes:
-    half = _EC_RAW_SIG_HALF_BYTES[alg]
+    half = _ec_component_bytes(alg)
     r = int.from_bytes(raw[:half], "big")
     s = int.from_bytes(raw[half:], "big")
     return encode_dss_signature(r, s)
