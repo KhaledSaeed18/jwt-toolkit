@@ -88,7 +88,7 @@ Exit codes are documented in the README and are part of the CLI contract: `0` = 
 
 ## Release
 
-Version lives in `pyproject.toml`. Tag a release and publish via GitHub Releases — `.github/workflows/publish.yml` builds with `uv build` and uploads to PyPI via Trusted Publishing (OIDC, `pypi` GitHub environment with manual approval). **Never publish manually with `twine`/`uv publish`.** Full release flow is in the `/release` skill at `.claude/skills/release/SKILL.md`.
+Releases are automated with release-please in `.github/workflows/publish.yml` (the file name and the `pypi` environment are registered with PyPI Trusted Publishing; never rename them). Every push to `main` updates a `chore(release): vX.Y.Z` PR; merging it tags, creates the GitHub Release, re-runs the full CI gate on that commit, builds, and publishes after the `pypi` environment approval. Commit types decide the version, so PR titles must follow Conventional Commits (checked in CI and by the `commit-msg` hook). Don't bump the version or edit `CHANGELOG.md` by hand. **Never publish manually with `twine`/`uv publish`.** Details are in the `/release` skill at `.claude/skills/release/SKILL.md`.
 
 ## Further reading
 

@@ -5,6 +5,10 @@
 # Hooks are pinned by rev for reproducibility. Bump with:
 #   uv run pre-commit autoupdate
 
+# `pre-commit install` sets up both hook types: style checks on commit, and the
+# Conventional Commits check on the message (release-please reads those messages).
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   # General hygiene
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -38,3 +42,12 @@ repos:
 
   # Mypy and pip-audit run in CI rather than pre-commit:
   # mypy is slow on cold cache, pip-audit needs network.
+
+  # Commit message rules shared with the PR-title check in CI.
+  - repo: local
+    hooks:
+      - id: conventional-commit-message
+        name: conventional commit message
+        entry: python scripts/check_commit_message.py --file
+        language: python
+        stages: [commit-msg]
