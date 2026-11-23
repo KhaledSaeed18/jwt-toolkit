@@ -1,25 +1,68 @@
+# Dependency updates: grouped pull requests, once a week.
+#
+# Commit types are chosen so that merging an update never cuts a release on its
+# own: release-please releases on feat, fix, security, perf, revert and docs, and
+# these use build and ci. An update ships with the next release of real changes.
+# Merge with "squash and merge", like any other pull request; the PR title is the
+# commit message release-please reads.
 version: 2
-updates:
-  # All Python dependencies (runtime + dev) bundled into a single weekly PR.
-  # Major versions are split out so they get a deliberate review instead of silently riding along with patch bumps.
-  - package-ecosystem: "uv"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 1
-    groups:
-      python:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
 
-  # GitHub Actions pin updates bundled into a single weekly PR.
-  - package-ecosystem: "github-actions"
-    directory: "/"
+updates:
+  - package-ecosystem: uv # reads pyproject.toml and uv.lock
+    directory: /
     schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 1
+      interval: weekly
+      day: monday
+      time: "06:00"
+    # Skip versions published in the last week, so a bad or compromised release
+    # has time to be pulled before it reaches the lockfile.
+    cooldown:
+      default-days: 7
+    # Update the lockfile only. The lower bounds in pyproject.toml stay low so
+    # users can resolve click, cryptography and rich alongside their other tools;
+    # raise a bound by hand (as a fix or security commit) when a CVE requires it.
+    versioning-strategy: lockfile-only
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope # build(deps): ... and build(deps-dev): ...
+    groups:
+      # Minor and patch updates: one pull request each, usually a straight merge.
+      runtime:
+        dependency-type: production
+        update-types: [minor, patch]
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+      # Major updates: separate pull requests, since they may need code changes.
+      runtime-major:
+        dependency-type: production
+        update-types: [major]
+      dev-dependencies-major:
+        dependency-type: development
+        update-types: [major]
+      # Security updates are batched as well, but never wait for the cooldown.
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    cooldown:
+      default-days: 7
+    # Actions are pinned to full commit SHAs with the version in a comment;
+    # Dependabot updates both.
+    commit-message:
+      prefix: ci
+      include: scope # ci(deps): ...
     groups:
       github-actions:
         patterns: ["*"]
+        update-types: [minor, patch]
+      github-actions-major:
+        patterns: ["*"]
+        update-types: [major]
