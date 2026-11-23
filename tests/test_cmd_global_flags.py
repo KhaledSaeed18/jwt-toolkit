@@ -1,4 +1,8 @@
 import os
+import subprocess
+import sys
+
+import pytest
 
 from jwt_toolkit.cli import cli
 from tests.helpers import make_token
@@ -65,3 +69,70 @@ def test_global_flags_do_not_leak_into_the_environment(runner, valid_token, monk
     runner.invoke(cli, ["--quiet", "--no-color", "decode", valid_token])
     assert "JWT_TOOLKIT_QUIET" not in os.environ
     assert "NO_COLOR" not in os.environ
+
+
+# FORCE_COLOR makes Rich treat the output as a terminal, where styles would be
+# emitted; NO_COLOR and --no-color must still keep every escape code out.
+_TERMINAL = {"FORCE_COLOR": "1", "COLUMNS": "100"}
+
+
+def _assert_plain(text: str) -> None:
+    assert "\x1b[" not in text, repr(text[:200])
+
+
+def test_terminal_output_is_styled_without_no_color(runner, valid_token):
+    result = runner.invoke(cli, ["--no-banner", "audit", valid_token], env=_TERMINAL)
+    assert "\x1b[" in result.stdout
+
+
+@pytest.mark.parametrize("command", [["decode"], ["audit"], ["verify", "--secret", "wrong"]])
+def test_no_color_env_drops_all_styles_in_a_terminal(runner, valid_token, command):
+    env = {**_TERMINAL, "NO_COLOR": "1"}
+    result = runner.invoke(cli, ["--no-banner", command[0], valid_token, *command[1:]], env=env)
+    _assert_plain(result.stdout)
+    _assert_plain(result.stderr)
+
+
+@pytest.mark.parametrize("command", [["decode"], ["audit"]])
+def test_no_color_flag_drops_all_styles_in_a_terminal(runner, valid_token, command):
+    result = runner.invoke(cli, ["--no-banner", "--no-color", *command, valid_token], env=_TERMINAL)
+    _assert_plain(result.stdout)
+
+
+def test_no_color_errors_have_no_styles(runner):
+    env = {**_TERMINAL, "NO_COLOR": "1"}
+    result = runner.invoke(cli, ["--no-banner", "decode", "not-a-token"], env=env)
+    assert result.exit_code == 2
+    _assert_plain(result.stderr)
+
+
+def test_no_color_in_a_real_pseudo_terminal(valid_token):
+    pty = pytest.importorskip("pty", reason="needs a POSIX pseudo-terminal")
+    main, secondary = pty.openpty()
+    env = {k: v for k, v in os.environ.items() if k not in ("FORCE_COLOR", "TERM")}
+    env |= {"NO_COLOR": "1", "TERM": "xterm-256color", "COLUMNS": "100"}
+    code = "from jwt_toolkit.cli import cli; cli()"
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code, "--no-banner", "audit", valid_token],
+        stdin=secondary,
+        stdout=secondary,
+        stderr=secondary,
+        env=env,
+    )
+    # Read while the child runs: a pty buffer nobody drains would block it.
+    os.close(secondary)
+    chunks = []
+    while True:
+        try:
+            data = os.read(main, 65536)
+        except OSError:
+            break
+        if not data:
+            break
+        chunks.append(data)
+    os.close(main)
+    proc.wait(timeout=60)
+    output = b"".join(chunks).decode("utf-8", "replace")
+    assert proc.returncode in (0, 1)
+    assert "Token Audit" in output or "Grade" in output, output[:300]
+    _assert_plain(output)

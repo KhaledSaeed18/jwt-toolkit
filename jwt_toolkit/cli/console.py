@@ -22,7 +22,12 @@ class _ConsoleProxy:
         # (or a test suite) never keeps a console configured for an earlier one.
         settings = (bool(os.environ.get("NO_COLOR")), self._mute_when_quiet and is_quiet())
         if self._inner is None or settings != self._settings:
-            self._inner = Console(stderr=self._stderr, no_color=settings[0], quiet=settings[1])
+            # Rich's no_color drops colors but keeps dim, bold and italic. No color
+            # system at all means no escape codes, which is what NO_COLOR users expect.
+            extra: dict[str, Any] = {"color_system": None} if settings[0] else {}
+            self._inner = Console(
+                stderr=self._stderr, no_color=settings[0], quiet=settings[1], **extra
+            )
             self._settings = settings
         return self._inner
 
