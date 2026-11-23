@@ -30,7 +30,7 @@ The JWS logic is implemented in the open on top of [`cryptography`](https://cryp
 - [Scripting and CI](#scripting-and-ci)
 - [Security model](#security-model)
 - [Use responsibly](#use-responsibly)
-- [Contributing](#contributing) · [Security policy](#security-policy) · [License](#license)
+- [Contributing](#contributing) · [Security policy](#security-policy) · [Accessibility](#accessibility) · [License](#license)
 
 ## Features
 
@@ -464,11 +464,15 @@ What `jwt-toolkit` guarantees about its own behavior:
 
 ## Contributing
 
-Contributions are welcome, from new audit rules to documentation fixes. See [CONTRIBUTING.md](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/CONTRIBUTING.md) for the project layout, development setup, branch and commit conventions, and the pull request checklist.
+Contributions are welcome, from new audit rules to documentation fixes. See [CONTRIBUTING.md](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/CONTRIBUTING.md) for the project layout, development setup, branch and commit conventions, and the pull request checklist. Everyone taking part is expected to follow the [Code of Conduct](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/CODE_OF_CONDUCT.md).
 
 ## Security policy
 
 Please report vulnerabilities privately through [GitHub Security Advisories](https://github.com/KhaledSaeed18/jwt-toolkit/security/advisories/new), not public issues. See [SECURITY.md](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/SECURITY.md) for supported versions and the supply-chain controls behind each release.
+
+## Accessibility
+
+Every verdict is printed in words, color is optional (`NO_COLOR=1` or `--no-color` removes every escape code), and every result is available as `--json`. See [ACCESSIBILITY.md](https://github.com/KhaledSaeed18/jwt-toolkit/blob/main/ACCESSIBILITY.md) for known limitations and how to report a barrier.
 
 ## License
 

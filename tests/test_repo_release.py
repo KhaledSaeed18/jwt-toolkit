@@ -32,11 +32,11 @@ checker = _load_checker()
 
 
 def _config() -> dict:
-    return json.loads((ROOT / "release-please-config.json").read_text())
+    return json.loads((ROOT / "release-please-config.json").read_text(encoding="utf-8"))
 
 
 def _contributing_types() -> set[str]:
-    text = (ROOT / "CONTRIBUTING.md").read_text()
+    text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     line = next(line for line in text.splitlines() if "must be one of:" in line)
     return set(re.findall(r"`([a-z]+)`", line.split("must be one of:")[1]))
 
@@ -55,7 +55,7 @@ def test_only_user_facing_types_release():
 
 
 def test_manifest_matches_pyproject_version():
-    manifest = json.loads((ROOT / ".release-please-manifest.json").read_text())
+    manifest = json.loads((ROOT / ".release-please-manifest.json").read_text(encoding="utf-8"))
     with (ROOT / "pyproject.toml").open("rb") as fh:
         version = tomllib.load(fh)["project"]["version"]
     assert manifest == {".": version}
@@ -83,7 +83,7 @@ def test_tags_and_titles_follow_the_project_convention():
 
 
 def test_publish_workflow_keeps_the_trusted_publisher_identity():
-    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
     assert "name: pypi" in workflow
     assert "id-token: write" in workflow
     assert "release-please-config.json" in workflow
