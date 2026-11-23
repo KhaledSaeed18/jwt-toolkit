@@ -4,7 +4,7 @@ This package is the pure-logic layer. Files here are imported by `jwt_toolkit/co
 
 ## Layering
 
-- **No `click`, no `rich`, no `pyfiglet`.** Functions here return data, raise typed exceptions from `errors.py`, or write to explicit file/stream arguments. They never call `print()`, `click.echo()`, or `console.print()`. Rendering belongs in `cli/` and `commands/`.
+- **No `click`, no `rich`.** Functions here return data, raise typed exceptions from `errors.py`, or write to explicit file/stream arguments. They never call `print()`, `click.echo()`, or `console.print()`. Rendering belongs in `cli/` and `commands/`.
 - **No `sys.exit()`.** Raise a domain exception (a `JwtToolkitError` subclass); the CLI error boundary renders it and exits 2.
 - **No process-wide state.** No globals that hold a token, key, or wordlist between calls. Caches (e.g., JWKS) must be passed in or stored on an object the caller owns.
 

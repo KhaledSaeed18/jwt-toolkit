@@ -11,13 +11,7 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-try:
-    from pyfiglet import Figlet
-
-    _HAS_FIGLET = True
-except ImportError:
-    _HAS_FIGLET = False
-
+from jwt_toolkit.cli.banner_art import ART_NARROW, ART_WIDE
 from jwt_toolkit.cli.console import console as _shared_console
 
 # The banner is intentionally only shown for the bare invocation. Printing it
@@ -32,11 +26,6 @@ def _get_version() -> str:
         return "0.0.0"
 
 
-# Three figlet fonts at full width, plus narrower fallbacks for small terminals.
-# One is picked at random each invocation so the splash doesn't feel static.
-_FONTS_WIDE = ("slant", "ansi_shadow", "small_slant")
-_FONTS_NARROW = ("small", "standard", "mini")
-
 # Cool cyan→violet gradient applied line-by-line to the ASCII art.
 _GRADIENT = ("#22d3ee", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6")
 
@@ -47,8 +36,7 @@ _SUBTITLE = "JWT Security Toolkit"
 _TAGLINE = "Decode · Sign · Audit · Verify · Forge · Crack · Generate"
 _REPO_URL = "https://github.com/KhaledSaeed18/jwt-toolkit"
 
-# Plain-ASCII fallback shown when pyfiglet is unavailable or every font is
-# wider than the terminal. Kept narrow on purpose (~60 cols).
+# Shown when every pre-rendered font is wider than the terminal.
 _PLAIN_FALLBACK = r"""
    _ _    _ _____   _____           _ _    _ _
   | | |  | |_   _| |_   _|__   ___ | | | _(_) |_
@@ -73,27 +61,20 @@ def _terminal_width(default: int = 80) -> int:
     return shutil.get_terminal_size((default, 20)).columns
 
 
-def _pick_art(width: int) -> tuple[str, bool]:
-    """Render the title via pyfiglet; return (art, used_figlet)."""
-    if not _HAS_FIGLET:
-        return _PLAIN_FALLBACK.strip("\n"), False
+def _pick_art(width: int, rng: random.Random | None = None) -> tuple[str, ...]:
+    """Pick a random pre-rendered title that fits ``width`` columns."""
+    candidates = list(ART_WIDE if width >= 78 else ART_NARROW)
+    (rng or random.Random()).shuffle(candidates)
+    for art in candidates:
+        if max((len(line) for line in art), default=0) <= width:
+            return art
+    return tuple(_PLAIN_FALLBACK.strip("\n").splitlines())
 
-    fonts = _FONTS_WIDE if width >= 78 else _FONTS_NARROW
-    candidates = list(fonts)
-    random.shuffle(candidates)
 
-    for font in candidates:
-        try:
-            fig = Figlet(font=font, width=max(width, 40))
-            art = fig.renderText("JWT Toolkit").rstrip("\n")
-        # A broken or missing font must never stop the CLI; the next one is tried.
-        except Exception:  # nosec B112
-            continue
-        max_line = max((len(line) for line in art.splitlines()), default=0)
-        if max_line <= width:
-            return art, True
-
-    return _PLAIN_FALLBACK.strip("\n"), False
+def _pad(art: tuple[str, ...]) -> list[str]:
+    # Every line shares one width so centering keeps the letters aligned.
+    widest = max((len(line) for line in art), default=0)
+    return [line.ljust(widest) for line in art]
 
 
 def _colorize_line(line: str, line_index: int, total_lines: int) -> Text:
@@ -124,31 +105,30 @@ def render_banner(
     an interactive terminal, and falls back to a single-shot render in pipes,
     CI, or when NO_COLOR / TERM=dumb is set.
     """
-    console = console or _shared_console
+    out = console if console is not None else _shared_console
     if animate is None:
         animate = _is_animation_safe()
 
     width = _terminal_width()
-    art, _ = _pick_art(width)
-    lines = art.splitlines()
+    lines = _pad(_pick_art(width))
     total = len(lines)
 
     # Top breathing room
-    console.print()
+    out.print()
 
     for i, line in enumerate(lines):
-        console.print(Align.center(_colorize_line(line, i, total)))
+        out.print(Align.center(_colorize_line(line, i, total)))
         if animate:
             time.sleep(0.012)
 
-    console.print()
-    console.print(Align.center(Text(_SUBTITLE, style=f"bold {_ACCENT}")))
-    console.print(Align.center(Text(_TAGLINE, style=_DIM)))
+    out.print()
+    out.print(Align.center(Text(_SUBTITLE, style=f"bold {_ACCENT}")))
+    out.print(Align.center(Text(_TAGLINE, style=_DIM)))
 
     divider_width = min(max(width - 8, 20), 60)
-    console.print(Align.center(Text("─" * divider_width, style=_DIM)))
-    console.print(Align.center(_info_line(_get_version())))
-    console.print()
+    out.print(Align.center(Text("─" * divider_width, style=_DIM)))
+    out.print(Align.center(_info_line(_get_version())))
+    out.print()
 
 
 # Single source for the command list and examples; CLI_HELP is built from these too.
@@ -219,15 +199,15 @@ def _two_col_table(
 
 def render_help(console: Console | None = None) -> None:
     """Render a polished, sectioned help screen for the bare invocation."""
-    console = console or _shared_console
+    out = console if console is not None else _shared_console
 
     about = Text(
         "A command-line toolkit for inspecting, verifying, cracking, and securing "
         "JSON Web Tokens, built to expose how JWT signing works and where it breaks.",
         style="white",
     )
-    console.print(_section_header("ABOUT"))
-    console.print(Padding(about, (0, 4, 1, 4)))
+    out.print(_section_header("ABOUT"))
+    out.print(Padding(about, (0, 4, 1, 4)))
 
     usage = Text()
     usage.append("$ ", style=_DIM)
@@ -236,27 +216,27 @@ def render_help(console: Console | None = None) -> None:
     usage.append("COMMAND ", style="bold magenta")
     usage.append("[ARGS]...", style=_DIM)
 
-    console.print(_section_header("USAGE"))
-    console.print(Padding(usage, (0, 0, 1, 4)))
+    out.print(_section_header("USAGE"))
+    out.print(Padding(usage, (0, 0, 1, 4)))
 
-    console.print(_section_header("COMMANDS"))
-    console.print(
+    out.print(_section_header("COMMANDS"))
+    out.print(
         Padding(
             _two_col_table(COMMANDS, key_style="bold cyan"),
             (0, 0, 1, 2),
         )
     )
 
-    console.print(_section_header("EXAMPLES"))
-    console.print(
+    out.print(_section_header("EXAMPLES"))
+    out.print(
         Padding(
             _two_col_table(EXAMPLES, key_style=_DIM, value_style="bright_green", key_prefix="# "),
             (0, 0, 1, 2),
         )
     )
 
-    console.print(_section_header("OPTIONS"))
-    console.print(
+    out.print(_section_header("OPTIONS"))
+    out.print(
         Padding(
             _two_col_table(_OPTIONS, key_style="yellow"),
             (0, 0, 1, 2),
@@ -266,5 +246,5 @@ def render_help(console: Console | None = None) -> None:
     hint = Text("Run ", style=_DIM)
     hint.append("jwt-toolkit COMMAND --help", style=f"bold {_ACCENT}")
     hint.append(" for command-specific options.", style=_DIM)
-    console.print(Padding(hint, (0, 0, 0, 2)))
-    console.print()
+    out.print(Padding(hint, (0, 0, 0, 2)))
+    out.print()
