@@ -62,6 +62,7 @@ def _decode(side: str, raw: str) -> DecodedToken:
             details=exc.details,
             code=exc.code,
             title=exc.title,
+            cause=exc.cause,
             extra=(("input", side),),
         ) from exc
 

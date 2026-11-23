@@ -56,7 +56,57 @@ def _finite_float(text: str) -> float:
     return value
 
 
+# Real JWT headers and claims nest a few levels; anything deeper is hostile or broken.
+MAX_JSON_DEPTH = 32
+
+
+class DuplicateMemberError(ValueError):
+    # RFC 7515 4 and RFC 7519 4 let a parser reject duplicate member names. Parsers
+    # that keep the first or the last one disagree about what the token says.
+    pass
+
+
+class JsonTooDeepError(ValueError):
+    pass
+
+
+def _reject_duplicates(pairs: list[tuple[str, Any]]) -> JsonObject:
+    result: JsonObject = {}
+    for name, value in pairs:
+        if name in result:
+            raise DuplicateMemberError(name)
+        result[name] = value
+    return result
+
+
+def _check_depth(value: object) -> None:
+    stack: list[tuple[object, int]] = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, dict):
+            children: list[object] = list(item.values())
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+        if depth > MAX_JSON_DEPTH:
+            raise JsonTooDeepError(depth)
+        stack.extend((child, depth + 1) for child in children)
+
+
 def strict_json_loads(raw: str | bytes) -> object:
     # RFC 8259 has no NaN/Infinity; Python accepts them by default, and an
     # exponent like 1e400 silently overflows to inf. Both defeat exp/nbf checks.
-    return json.loads(raw, parse_constant=_reject_constant, parse_float=_finite_float)
+    # Bytes must be UTF-8 (RFC 7519 7.2); json.loads would also detect UTF-16 and UTF-32.
+    text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    try:
+        value = json.loads(
+            text,
+            parse_constant=_reject_constant,
+            parse_float=_finite_float,
+            object_pairs_hook=_reject_duplicates,
+        )
+    except RecursionError as exc:
+        raise JsonTooDeepError(MAX_JSON_DEPTH) from exc
+    _check_depth(value)
+    return value

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from jwt_toolkit.cli.errors import JSON_SCHEMA_VERSION, render_error
-from jwt_toolkit.core.decoder import DecodedToken, decode_token
+from jwt_toolkit.core.decoder import MAX_TOKEN_BYTES, DecodedToken, check_token_size, decode_token
 from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import JwtToolkitError
 
@@ -20,12 +20,16 @@ def resolve_token(raw: str) -> str:
     A leading "Bearer " is dropped, so a value copied from an Authorization
     header works as-is.
     """
+    # Reads stop just past the limit, so a huge stdin or file is never loaded whole.
     if raw == "-":
-        return _strip_bearer(sys.stdin.read())
+        return _strip_bearer(_bounded(sys.stdin.read(MAX_TOKEN_BYTES + 1)))
     if raw.startswith("@"):
         path = raw[1:]
         try:
-            return _strip_bearer(Path(path).read_text(encoding="utf-8"))
+            with Path(path).open("rb") as handle:
+                data = handle.read(MAX_TOKEN_BYTES + 1)
+            check_token_size(len(data))
+            return _strip_bearer(data.decode("utf-8"))
         except (OSError, UnicodeDecodeError) as exc:
             reason = (
                 "The file is not UTF-8 text"
@@ -38,7 +42,12 @@ def resolve_token(raw: str) -> str:
                 code="token_unreadable",
                 title="Input Error",
             ) from exc
-    return _strip_bearer(raw)
+    return _strip_bearer(_bounded(raw))
+
+
+def _bounded(value: str) -> str:
+    check_token_size(len(value.encode("utf-8", errors="surrogatepass")))
+    return value
 
 
 def _strip_bearer(value: str) -> str:
@@ -48,9 +57,9 @@ def _strip_bearer(value: str) -> str:
     return rest.strip() if scheme.lower() == "bearer" and rest else value
 
 
-def safe_decode(token: str) -> DecodedToken:
+def safe_decode(token: str, *, tolerate_whitespace: bool = False) -> DecodedToken:
     # A TokenDecodeError reaches the command's error boundary, which renders it.
-    return decode_token(token)
+    return decode_token(token, tolerate_whitespace=tolerate_whitespace)
 
 
 def emit_error(
