@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from jwt_toolkit.cli import cli
 from jwt_toolkit.core.crypto import sign_asymmetric
 from jwt_toolkit.core.encoding import base64url_encode
+from jwt_toolkit.core.keys import load_public_key
 from tests.helpers import (
     TEST_SECRET,
     make_rs256_token,
@@ -539,11 +540,14 @@ def test_non_ascii_signature_fails_verification_without_crashing(runner, valid_t
     assert json.loads(result.stdout)["valid"] is False
 
 
-def test_plain_http_jwks_adds_a_warning(runner, monkeypatch):
+def test_plain_http_jwks_adds_a_warning(runner, monkeypatch, keypair_for):
+    # No network: the JWKS lookup returns the real key that signed the token.
+    kp = keypair_for("RS256")
     monkeypatch.setattr(
-        "jwt_toolkit.commands.verify._verify_signature", lambda *args, **kwargs: True
+        "jwt_toolkit.commands.verify.resolve_jwks_public_key",
+        lambda *args, **kwargs: load_public_key(kp.public_pem),
     )
-    token = make_rs256_token({"sub": "1", "exp": 9_999_999_999})
+    token = _asymmetric_token({"sub": "1", "exp": 9_999_999_999}, "RS256", kp.private_pem)
     result = invoke(runner, token, "--jwks-url", "http://keys.example/jwks.json", "--json")
     document = json.loads(result.stdout)
     assert document["valid"] is True

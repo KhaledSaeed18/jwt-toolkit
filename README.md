@@ -160,6 +160,7 @@ jwt-toolkit audit <token> --strict --require iss,aud --json
 | `--require CLAIMS` | Comma-separated claims that must be present, such as `iss,aud,sub`. Each missing one is a WARN finding. |
 | `--secret`, `--secret-file` | Also verify an HMAC signature. When the secret verifies the token, it is also checked against the bundled common-secrets list and the RFC 7518 minimum length. |
 | `--public-key FILE` | Also verify an asymmetric signature with a PEM key or X.509 certificate, and check the RSA key size. |
+| `--jwks-url URL` | Also verify an asymmetric signature with the key the token's `kid` selects from a JWKS (`https://`, `http://`, or `file://`), and check that key's size. |
 | `--json` | Print the full report, including every finding and its recommendation. |
 
 **What it checks**
