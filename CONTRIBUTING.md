@@ -77,6 +77,7 @@ jwt-toolkit/
 │       ├── lifetime.py       # --expires-in parsing
 │       ├── timestamps.py     # Human-readable time claims
 │       └── wordlist.py       # Streaming wordlist reader and candidate expansion
+├── scripts/                  # Package smoke test and cliprobe runner (dev only, not shipped in the wheel)
 ├── tests/                    # Pytest suite mirroring the source layout
 │   ├── conftest.py           # Shared fixtures (keys, tokens, tmp wordlists)
 │   ├── helpers.py            # Test helpers
@@ -131,7 +132,7 @@ uv run jwt-toolkit --version
 make check
 ```
 
-`make check` runs the full local CI gate: lint, type checking, tests, security scan, dependency audit, and the GitHub Actions security lint. Run this before opening a pull request.
+`make check` runs the full local CI gate: lint, type checking, tests, security scan, dependency audit, the GitHub Actions security lint, and the installed-package smoke test (`scripts/package_check.py`: builds the wheel and sdist, checks what they contain, installs each into a fresh venv outside the repository, and runs the `jwt-toolkit` entry point). Run this before opening a pull request.
 
 ## Common tasks
 
@@ -148,6 +149,8 @@ make check
 | Static security scan (bandit)        | `make security`    |
 | Check deps for known CVEs (pip-audit)| `make audit`       |
 | Security-lint workflows (zizmor)     | `make actions`     |
+| Smoke-test the built package         | `make smoke`       |
+| cliprobe terminal checks (Node 22+)  | `make cliprobe`    |
 | Full local CI gate                   | `make check`       |
 | Run all pre-commit hooks             | `make pre-commit`  |
 | Clean caches and build artifacts     | `make clean`       |

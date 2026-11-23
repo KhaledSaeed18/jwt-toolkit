@@ -225,3 +225,6 @@ __marimo__/
 
 # Private planning notes
 /.project-planning/
+
+# Venv kept by `make cliprobe`.
+/.smoke-env/

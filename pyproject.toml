@@ -90,6 +90,8 @@ dev = [
     "bandit>=1.8",
     "pip-audit>=2.7",
     "zizmor>=1.33.1",
+    "validate-pyproject[all]>=0.27",
+    "twine>=7.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -171,7 +173,7 @@ known-first-party = ["jwt_toolkit", "tests"]
 
 [tool.mypy]
 python_version = "3.13"
-files = ["jwt_toolkit"]   # tests intentionally excluded — they don't need types
+files = ["jwt_toolkit", "scripts"]   # tests intentionally excluded — they don't need types
 strict = true
 pretty = true
 show_error_codes = true
