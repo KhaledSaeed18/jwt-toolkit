@@ -61,7 +61,7 @@ To try it without installing:
 uvx jwt-toolkit --help
 ```
 
-`pip install jwt-toolkit` also works inside a virtual environment. Requires Python 3.13 or newer.
+`pip install jwt-toolkit` also works inside a virtual environment. Requires Python 3.13 or newer. CI tests CPython 3.13, 3.14 and 3.15 on Linux and Windows, and 3.13 on macOS.
 
 ## A two-minute tour
 
