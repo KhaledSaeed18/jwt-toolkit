@@ -79,19 +79,29 @@ def _reject_duplicates(pairs: list[tuple[str, Any]]) -> JsonObject:
     return result
 
 
-def _check_depth(value: object) -> None:
-    stack: list[tuple[object, int]] = [(value, 1)]
-    while stack:
-        item, depth = stack.pop()
-        if isinstance(item, dict):
-            children: list[object] = list(item.values())
-        elif isinstance(item, list):
-            children = item
-        else:
-            continue
-        if depth > MAX_JSON_DEPTH:
-            raise JsonTooDeepError(depth)
-        stack.extend((child, depth + 1) for child in children)
+def _check_depth(text: str) -> None:
+    # Measured on the text before parsing, because how deep the parser recurses, and
+    # whether it raises RecursionError, differs between Python versions. One pass with
+    # no backtracking, so hostile input cannot make it slow.
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise JsonTooDeepError(depth)
+        elif char in "]}":
+            depth -= 1
 
 
 def strict_json_loads(raw: str | bytes) -> object:
@@ -99,14 +109,10 @@ def strict_json_loads(raw: str | bytes) -> object:
     # exponent like 1e400 silently overflows to inf. Both defeat exp/nbf checks.
     # Bytes must be UTF-8 (RFC 7519 7.2); json.loads would also detect UTF-16 and UTF-32.
     text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-    try:
-        value = json.loads(
-            text,
-            parse_constant=_reject_constant,
-            parse_float=_finite_float,
-            object_pairs_hook=_reject_duplicates,
-        )
-    except RecursionError as exc:
-        raise JsonTooDeepError(MAX_JSON_DEPTH) from exc
-    _check_depth(value)
-    return value
+    _check_depth(text)
+    return json.loads(
+        text,
+        parse_constant=_reject_constant,
+        parse_float=_finite_float,
+        object_pairs_hook=_reject_duplicates,
+    )

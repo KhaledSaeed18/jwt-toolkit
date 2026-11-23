@@ -1,5 +1,6 @@
 import binascii
 import json
+import time
 
 import pytest
 
@@ -81,3 +82,19 @@ def test_strict_json_allows_the_same_name_in_different_objects():
 def test_strict_json_requires_utf8_bytes(raw):
     with pytest.raises((UnicodeDecodeError, json.JSONDecodeError)):
         strict_json_loads(raw)
+
+
+@pytest.mark.parametrize("bracket", ["[", "{", "]", "}"])
+def test_brackets_inside_strings_do_not_count_as_nesting(bracket):
+    text = '{"a":"' + bracket * 100 + '","b":"\\"' + bracket * 100 + '"}'
+    assert strict_json_loads(text) == {"a": bracket * 100, "b": '"' + bracket * 100}
+
+
+# These made an earlier regex-based depth scan quadratic: minutes at the token limit.
+@pytest.mark.parametrize("unit", ['"\\', '\\"', '"a\\', "\\", '"['])
+def test_depth_scan_is_linear_on_hostile_text(unit):
+    text = unit * (256 * 1024 // len(unit))
+    start = time.perf_counter()
+    with pytest.raises(ValueError):
+        strict_json_loads(text)
+    assert time.perf_counter() - start < 2
