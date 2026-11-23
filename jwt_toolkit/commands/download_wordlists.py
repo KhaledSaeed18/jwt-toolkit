@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import ClassVar
 
 import click
 from rich.markup import escape
@@ -24,7 +25,9 @@ from rich.progress import (
 )
 
 from jwt_toolkit.cli.console import console, err_console, status_console
-from jwt_toolkit.cli.panels import print_error, print_success
+from jwt_toolkit.cli.errors import ToolkitCommand
+from jwt_toolkit.cli.panels import print_success
+from jwt_toolkit.core.errors import JwtToolkitError, frozen_error, redact_url
 
 
 def _release_ref() -> str:
@@ -55,11 +58,12 @@ def _open_url(url: str) -> http.client.HTTPResponse:
     return response
 
 
-class _DownloadError(Exception):
-    def __init__(self, headline: str, *details: str) -> None:
-        super().__init__(headline)
-        self.headline = headline
-        self.details = details
+@frozen_error
+class _DownloadError(JwtToolkitError):
+    # A download that did not complete is a failed run (exit 1), not unusable input.
+    code: str = "download_failed"
+    title: str = "Download Failed"
+    exit_code: ClassVar[int] = 1
 
 
 def _download(url: str, dest_dir: Path) -> tuple[Path, int]:
@@ -68,17 +72,19 @@ def _download(url: str, dest_dir: Path) -> tuple[Path, int]:
     try:
         response = _open_url(url)
     except urllib.error.HTTPError as exc:
-        raise _DownloadError(f"The server answered HTTP {exc.code} {exc.reason}", url) from exc
+        raise _DownloadError(
+            f"The server answered HTTP {exc.code} {exc.reason}", (redact_url(url),)
+        ) from exc
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, ssl.SSLCertVerificationError):
             raise _DownloadError(
                 "TLS certificate verification failed, the download cannot be trusted",
-                "If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle.",
+                ("If a proxy re-signs TLS traffic, point SSL_CERT_FILE at its CA bundle.",),
             ) from exc
         reason = getattr(exc.reason, "strerror", None) or str(exc.reason)
-        raise _DownloadError("Could not reach the download source", reason) from exc
+        raise _DownloadError("Could not reach the download source", (reason,)) from exc
     except (OSError, ValueError) as exc:
-        raise _DownloadError("Could not reach the download source", str(exc)) from exc
+        raise _DownloadError("Could not reach the download source", (str(exc),)) from exc
 
     try:
         fd, tmp_name = tempfile.mkstemp(prefix=f".{_FILENAME}.", suffix=".part", dir=dest_dir)
@@ -113,7 +119,7 @@ def _download(url: str, dest_dir: Path) -> tuple[Path, int]:
     except (OSError, http.client.HTTPException) as exc:
         tmp.unlink(missing_ok=True)
         raise _DownloadError(
-            "The download was interrupted", str(exc) or type(exc).__name__
+            "The download was interrupted", (str(exc) or type(exc).__name__,)
         ) from exc
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -149,6 +155,7 @@ def _fmt_bytes(n: int) -> str:
 
 @click.command(
     "download-wordlists",
+    cls=ToolkitCommand,
     help=(
         "Download the common-secrets wordlist for this release.\n\n"
         "Fetches common-secrets.txt from the jwt-toolkit repository at the tag "
@@ -186,13 +193,12 @@ def download_wordlists(output_dir: str, force: bool, source: str | None) -> None
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        print_error(
-            "Cannot create output directory",
-            f"Path  : {dest_dir}",
-            f"Error : {exc.strerror}",
+        raise JwtToolkitError(
+            headline="Cannot create output directory",
+            details=(f"Path  : {dest_dir}", f"Error : {exc.strerror}"),
+            code="output_dir_unusable",
             title="Directory Error",
-        )
-        raise SystemExit(2) from exc
+        ) from exc
 
     dest = dest_dir / _FILENAME
 
@@ -207,47 +213,45 @@ def download_wordlists(output_dir: str, force: bool, source: str | None) -> None
     if source:
         scheme = urllib.parse.urlparse(source).scheme
         if scheme not in _PERMITTED_SOURCE_SCHEMES:
-            print_error(
-                f"--source scheme {scheme!r} is not supported",
-                "Use an https://, http://, or file:// URL.",
+            raise JwtToolkitError(
+                headline=f"--source scheme {scheme!r} is not supported",
+                details=("Use an https://, http://, or file:// URL.",),
+                code="invalid_input",
                 title="Invalid Input",
             )
-            raise SystemExit(2)
-        status_console.print(f"[dim]Source   : {escape(url)}[/dim]")
+        status_console.print(f"[dim]Source   : {escape(redact_url(url))}[/dim]")
     status_console.print(f"[dim]Saving to: {escape(str(dest))}[/dim]")
 
     try:
         tmp, written = _download(url, dest_dir)
     except KeyboardInterrupt:
         err_console.print("[yellow]Download cancelled[/yellow]")
-        raise SystemExit(1) from None
-    except _DownloadError as exc:
-        print_error(exc.headline, *exc.details, title="Download Failed")
-        raise SystemExit(1) from exc
+        raise click.exceptions.Exit(1) from None
     except OSError as exc:
-        print_error(
-            "Could not write the wordlist",
-            f"Path  : {dest_dir}",
-            f"Error : {exc.strerror or type(exc).__name__}",
+        raise JwtToolkitError(
+            headline="Could not write the wordlist",
+            details=(f"Path  : {dest_dir}", f"Error : {exc.strerror or type(exc).__name__}"),
+            code="output_dir_unusable",
             title="Write Error",
-        )
-        raise SystemExit(2) from exc
+        ) from exc
 
     if verify_integrity:
         actual = _sha256(tmp)
         if not hmac.compare_digest(actual, _WORDLIST_SHA256):
             tmp.unlink(missing_ok=True)
-            print_error(
-                "Integrity check failed, the download was discarded",
-                f"Expected : {_WORDLIST_SHA256}",
-                f"Got      : {actual}",
-                "The downloaded file does not match the pinned checksum.",
-                "This may indicate a compromised source or a wordlist update.",
-                "If the wordlist was intentionally updated, report this at "
-                "https://github.com/KhaledSaeed18/jwt-toolkit/issues",
+            raise JwtToolkitError(
+                headline="Integrity check failed, the download was discarded",
+                details=(
+                    f"Expected : {_WORDLIST_SHA256}",
+                    f"Got      : {actual}",
+                    "The downloaded file does not match the pinned checksum.",
+                    "This may indicate a compromised source or a wordlist update.",
+                    "If the wordlist was intentionally updated, report this at "
+                    "https://github.com/KhaledSaeed18/jwt-toolkit/issues",
+                ),
+                code="integrity_check_failed",
                 title="Integrity Error",
             )
-            raise SystemExit(2)
 
     tmp.replace(dest)
     lines = _count_lines(dest)

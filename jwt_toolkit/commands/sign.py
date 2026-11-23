@@ -8,7 +8,7 @@ from click.core import ParameterSource
 
 from jwt_toolkit.cli.algorithms import is_asymmetric, is_hmac
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
-from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.cli.errors import ToolkitCommand, reported_as
 from jwt_toolkit.core.crypto import (
     ALL_SIGNING_ALGORITHMS,
     algorithm_for_private_key,
@@ -29,14 +29,19 @@ from jwt_toolkit.core.encoding import (
 from jwt_toolkit.core.errors import (
     ClaimConflictError,
     InvalidDurationError,
+    JwtToolkitError,
     KeyPassphraseRequiredError,
+    UnsupportedAlgorithmError,
 )
 from jwt_toolkit.core.lifetime import parse_duration, with_lifetime
 
 _ALG_CHOICES = sorted(ALL_SIGNING_ALGORITHMS)
 
 
-@click.command(help="Mint a new JWT signed with an HMAC secret or an asymmetric private key.")
+@click.command(
+    cls=ToolkitCommand,
+    help="Mint a new JWT signed with an HMAC secret or an asymmetric private key.",
+)
 @click.option(
     "--payload",
     "payload_json",
@@ -108,11 +113,7 @@ def sign(
     alg: str,
     header_json: str | None,
 ) -> None:
-    try:
-        secret = resolve_secret(secret, secret_path)
-    except SecretInputError as exc:
-        print_error(exc.headline, *exc.details, title="Invalid Input")
-        raise SystemExit(2) from exc
+    secret = resolve_secret(secret, secret_path)
     payload = _parse_json_arg(_payload_text(payload_json, payload_path), label="payload")
     if expires_in is not None:
         try:
@@ -120,8 +121,12 @@ def sign(
                 payload, lifetime_seconds=parse_duration(expires_in), now=int(time.time())
             )
         except (InvalidDurationError, ClaimConflictError) as exc:
-            print_error(f"--expires-in: {exc.headline}", *exc.details, title="Invalid Input")
-            raise SystemExit(2) from exc
+            raise JwtToolkitError(
+                headline=f"--expires-in: {exc.headline}",
+                details=exc.details,
+                code=exc.code,
+                title="Invalid Input",
+            ) from exc
     header, passphrase = _resolve_header(
         None if header_json is None else _parse_json_arg(header_json, label="header"),
         alg,
@@ -134,17 +139,15 @@ def sign(
         canonical = canonical_algorithm(sign_alg) if isinstance(sign_alg, str) else None
         if canonical is not None:
             details.append(f"alg is case-sensitive; use {canonical!r} in --header")
-        print_error(
-            f"Unsupported algorithm: {sign_alg}",
-            *details,
+        raise UnsupportedAlgorithmError(
+            headline=f"Unsupported algorithm: {sign_alg}",
+            details=tuple(details),
             title="Algorithm Error",
         )
-        raise SystemExit(2)
 
     _validate_key_inputs(sign_alg, secret=secret, private_key_path=private_key_path)
     if passphrase_path is not None and private_key_path is None:
-        print_error("--passphrase-file only applies to --private-key", title="Invalid Input")
-        raise SystemExit(2)
+        raise SecretInputError("--passphrase-file only applies to --private-key")
 
     header_b64 = base64url_encode(json.dumps(header, separators=(",", ":")).encode())
     payload_b64 = base64url_encode(json.dumps(payload, separators=(",", ":")).encode())
@@ -162,13 +165,8 @@ def sign(
                 signature = _sign_asymmetric(
                     header_b64, payload_b64, pem_bytes, sign_alg, passphrase=_prompt_passphrase()
                 )
-        except ValueError as exc:
-            print_error(
-                "Could not sign with the provided private key",
-                str(exc),
-                title="Key Error",
-            )
-            raise SystemExit(2) from exc
+        except JwtToolkitError as exc:
+            raise _key_error(exc, "Could not sign with the provided private key") from exc
 
     click.echo(f"{header_b64}.{payload_b64}.{signature}")
 
@@ -177,19 +175,27 @@ def _payload_text(payload_json: str | None, payload_path: Path | None) -> str:
     if payload_path is None and payload_json is not None:
         return payload_json
     if payload_path is None or payload_json is not None:
-        print_error("Pass exactly one of --payload or --payload-file", title="Invalid Input")
-        raise SystemExit(2)
+        raise JwtToolkitError(
+            headline="Pass exactly one of --payload or --payload-file",
+            code="invalid_input",
+            title="Invalid Input",
+        )
     try:
         data = sys.stdin.buffer.read() if str(payload_path) == "-" else payload_path.read_bytes()
         return data.decode("utf-8-sig")
     except OSError as exc:
-        print_error(
-            "Cannot read --payload-file", exc.strerror or type(exc).__name__, title="Input Error"
-        )
-        raise SystemExit(2) from exc
+        raise JwtToolkitError(
+            headline="Cannot read --payload-file",
+            details=(exc.strerror or type(exc).__name__,),
+            code="payload_unreadable",
+            title="Input Error",
+        ) from exc
     except UnicodeDecodeError as exc:
-        print_error("--payload-file must contain UTF-8 JSON", title="Invalid Input")
-        raise SystemExit(2) from exc
+        raise JwtToolkitError(
+            headline="--payload-file must contain UTF-8 JSON",
+            code="payload_unreadable",
+            title="Invalid Input",
+        ) from exc
 
 
 def _resolve_header(
@@ -220,19 +226,23 @@ def _infer_algorithm(pem: bytes, passphrase: bytes | None) -> tuple[str, bytes |
         except KeyPassphraseRequiredError:
             passphrase = _prompt_passphrase()
             return algorithm_for_private_key(pem, passphrase=passphrase), passphrase
-    except ValueError as exc:
-        print_error("Could not use the provided private key", str(exc), title="Key Error")
-        raise SystemExit(2) from exc
+    except JwtToolkitError as exc:
+        raise _key_error(exc, "Could not use the provided private key") from exc
+
+
+def _key_error(exc: JwtToolkitError, headline: str) -> JwtToolkitError:
+    # A passphrase that could not be prompted for is reported as it is.
+    if isinstance(exc, KeyPassphraseRequiredError):
+        return exc
+    return reported_as(exc, code="key_error", title="Key Error", headline=headline)
 
 
 def _prompt_passphrase() -> bytes:
     if not _is_interactive():
-        print_error(
-            "The private key is encrypted",
-            "Pass --passphrase-file, or run in a terminal to be prompted.",
-            title="Key Error",
+        raise KeyPassphraseRequiredError(
+            headline="The private key is encrypted",
+            details=("Pass --passphrase-file, or run in a terminal to be prompted.",),
         )
-        raise SystemExit(2)
     return click.prompt("Private key passphrase", hide_input=True, err=True).encode()
 
 
@@ -250,64 +260,50 @@ def _parse_json_arg(raw: str, *, label: str) -> JsonObject:
     try:
         value = strict_json_loads(raw)
     except NonFiniteNumberError as exc:
-        print_error(
-            f"Invalid {label} JSON",
-            "NaN, Infinity, and overflowing numbers are not valid JSON.",
+        raise JwtToolkitError(
+            headline=f"Invalid {label} JSON",
+            details=("NaN, Infinity, and overflowing numbers are not valid JSON.",),
+            code="invalid_number",
             title="Invalid Input",
-        )
-        raise SystemExit(2) from exc
+        ) from exc
     except json.JSONDecodeError as exc:
-        print_error(
-            f"Invalid {label} JSON",
-            f"JSON error: {exc.msg}",
+        raise JwtToolkitError(
+            headline=f"Invalid {label} JSON",
+            details=(f"JSON error: {exc.msg}",),
+            code="invalid_json",
             title="Invalid Input",
-        )
-        raise SystemExit(2) from exc
+        ) from exc
     if not isinstance(value, dict):
-        print_error(
-            f"The {label} must be a JSON object",
-            f"Got a JSON {type(value).__name__}; a JWT {label} is always an object.",
+        raise JwtToolkitError(
+            headline=f"The {label} must be a JSON object",
+            details=(f"Got a JSON {type(value).__name__}; a JWT {label} is always an object.",),
+            code="invalid_json_object",
             title="Invalid Input",
         )
-        raise SystemExit(2)
     return value
 
 
 def _validate_key_inputs(alg: str, *, secret: str | None, private_key_path: Path | None) -> None:
     if secret is not None and private_key_path is not None:
-        print_error(
-            "Pass either --secret or --private-key, not both",
-            title="Invalid Input",
-        )
-        raise SystemExit(2)
+        raise SecretInputError("Pass either --secret or --private-key, not both")
 
     if is_hmac(alg):
         if not secret:
-            print_error(
+            raise SecretInputError(
                 f"{alg} requires --secret",
-                "Provide the HMAC secret to sign with.",
-                title="Invalid Input",
+                ("Provide the HMAC secret to sign with.",),
             )
-            raise SystemExit(2)
         if private_key_path is not None:
-            print_error(
-                f"{alg} is an HMAC algorithm: use --secret, not --private-key",
-                title="Invalid Input",
-            )
-            raise SystemExit(2)
+            raise SecretInputError(f"{alg} is an HMAC algorithm: use --secret, not --private-key")
         return
 
     if is_asymmetric(alg):
         if private_key_path is None:
-            print_error(
+            raise SecretInputError(
                 f"{alg} requires --private-key",
-                "Provide a PEM-encoded private key (PKCS#8 or traditional).",
-                title="Invalid Input",
+                ("Provide a PEM-encoded private key (PKCS#8 or traditional).",),
             )
-            raise SystemExit(2)
         if secret is not None:
-            print_error(
-                f"{alg} is an asymmetric algorithm: use --private-key, not --secret",
-                title="Invalid Input",
+            raise SecretInputError(
+                f"{alg} is an asymmetric algorithm: use --private-key, not --secret"
             )
-            raise SystemExit(2)

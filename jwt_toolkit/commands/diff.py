@@ -5,17 +5,20 @@ from rich.table import Table
 from rich.text import Text
 
 from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token
+from jwt_toolkit.cli.errors import ToolkitCommand
 from jwt_toolkit.cli.panels import print_success
 from jwt_toolkit.core.decoder import DecodedToken, decode_token
 from jwt_toolkit.core.diff import FieldChange, TokenDiff, diff_tokens
 from jwt_toolkit.core.encoding import JsonObject
-from jwt_toolkit.core.errors import TokenDecodeError
+from jwt_toolkit.core.errors import JwtToolkitError, TokenDecodeError
 
 _UNVERIFIED_NOTE = "Neither token was verified. This compares contents only."
 
 
-@click.command(help="Compare two JWTs and show which header and claim fields changed.")
+@click.command(
+    cls=ToolkitCommand, help="Compare two JWTs and show which header and claim fields changed."
+)
 @click.argument("before")
 @click.argument("after")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
@@ -28,18 +31,16 @@ _UNVERIFIED_NOTE = "Neither token was verified. This compares contents only."
 @click.pass_context
 def diff(ctx: click.Context, before: str, after: str, as_json: bool, exit_code: bool) -> None:
     if before == "-" and after == "-":
-        emit_error(
-            code="stdin_conflict",
-            title="Input Error",
+        raise JwtToolkitError(
             headline="Only one token can be read from stdin",
             details=("Pass the other token directly or as @path",),
-            as_json=as_json,
+            code="stdin_conflict",
+            title="Input Error",
         )
-        raise SystemExit(2)
 
     result = diff_tokens(
-        _decode("before", before, as_json=as_json),
-        _decode("after", after, as_json=as_json),
+        _decode("before", before),
+        _decode("after", after),
     )
 
     if as_json:
@@ -51,20 +52,18 @@ def diff(ctx: click.Context, before: str, after: str, as_json: bool, exit_code: 
         ctx.exit(1)
 
 
-def _decode(side: str, raw: str, *, as_json: bool) -> DecodedToken:
-    token = resolve_token(raw, as_json=as_json)
+def _decode(side: str, raw: str) -> DecodedToken:
+    token = resolve_token(raw)
     try:
         return decode_token(token)
     except TokenDecodeError as exc:
-        emit_error(
-            code=exc.code,
-            title=exc.title,
+        raise JwtToolkitError(
             headline=f"{side.capitalize()} token: {exc.headline}",
             details=exc.details,
-            as_json=as_json,
-            extra={"input": side},
-        )
-        raise SystemExit(2) from exc
+            code=exc.code,
+            title=exc.title,
+            extra=(("input", side),),
+        ) from exc
 
 
 def _json_document(result: TokenDiff) -> JsonObject:

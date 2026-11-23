@@ -9,7 +9,8 @@ from rich.table import Table
 from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.cli.errors import ToolkitCommand
 from jwt_toolkit.cli.wordlists import bundled_wordlist
 from jwt_toolkit.core.auditor import (
     Finding,
@@ -41,7 +42,7 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
 }
 
 
-@click.command(help="Audit a JWT and emit a security verdict.")
+@click.command(cls=ToolkitCommand, help="Audit a JWT and emit a security verdict.")
 @click.argument("token")
 @click.option(
     "--strict",
@@ -88,29 +89,11 @@ def audit(
     public_key_path: Path | None,
     required_claims: str,
 ) -> None:
-    try:
-        secret = resolve_secret(secret, secret_path)
-    except SecretInputError as exc:
-        emit_error(
-            code="invalid_key_options",
-            title="Invalid Input",
-            headline=exc.headline,
-            details=exc.details,
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
-
+    secret = resolve_secret(secret, secret_path)
     if secret is not None and public_key_path is not None:
-        emit_error(
-            code="invalid_key_options",
-            title="Invalid Input",
-            headline="Pass either --secret or --public-key, not both",
-            as_json=as_json,
-        )
-        raise SystemExit(2)
+        raise SecretInputError("Pass either --secret or --public-key, not both")
 
-    token = resolve_token(token, as_json=as_json)
-    decoded = safe_decode(token, as_json=as_json)
+    decoded = safe_decode(resolve_token(token))
     required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
 
     sig_result: tuple[bool, str] | None = None
@@ -145,7 +128,7 @@ def audit(
     else:
         _emit_rich(decoded.header, decoded.payload, decoded.signature, report, sig_result)
 
-    raise SystemExit(exit_code)
+    raise click.exceptions.Exit(exit_code)
 
 
 def _check_signature(

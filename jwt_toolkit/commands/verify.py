@@ -10,13 +10,9 @@ from rich.table import Table
 
 from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
-from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
-from jwt_toolkit.cli.decoding import (
-    JSON_SCHEMA_VERSION,
-    emit_error,
-    resolve_token,
-    safe_decode,
-)
+from jwt_toolkit.cli.credentials import resolve_secret, secret_file_option
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.cli.errors import ToolkitCommand, reported_as
 from jwt_toolkit.core.claims import (
     Check,
     check_audience,
@@ -27,7 +23,7 @@ from jwt_toolkit.core.claims import (
 from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.encoding import JsonObject
-from jwt_toolkit.core.errors import UnsupportedAlgorithmError
+from jwt_toolkit.core.errors import JwtToolkitError, UnsupportedAlgorithmError
 from jwt_toolkit.core.jwks import resolve_jwks_key
 
 RESULT_COLORS = {
@@ -37,7 +33,10 @@ RESULT_COLORS = {
 }
 
 
-@click.command(help="Verify a JWT's signature and standard claims (exp, nbf, iat, iss, aud).")
+@click.command(
+    cls=ToolkitCommand,
+    help="Verify a JWT's signature and standard claims (exp, nbf, iat, iss, aud).",
+)
 @click.argument("token")
 @click.option(
     "--secret",
@@ -91,24 +90,9 @@ def verify(
     leeway: int,
     as_json: bool,
 ) -> None:
-    try:
-        secret = resolve_secret(secret, secret_path)
-    except SecretInputError as exc:
-        emit_error(
-            code="invalid_key_options",
-            title="Invalid Input",
-            headline=exc.headline,
-            details=exc.details,
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
-
-    token = resolve_token(token, as_json=as_json)
-
-    decoded = safe_decode(token, as_json=as_json)
-    _require_one_key_source(
-        secret=secret, public_key_path=public_key_path, jwks_url=jwks_url, as_json=as_json
-    )
+    secret = resolve_secret(secret, secret_path)
+    decoded = safe_decode(resolve_token(token))
+    _require_one_key_source(secret=secret, public_key_path=public_key_path, jwks_url=jwks_url)
 
     alg, rejection = _pin_algorithm(decoded.header, uses_secret=secret is not None)
     if alg is None:
@@ -122,15 +106,13 @@ def verify(
                 public_key_path=public_key_path,
                 jwks_url=jwks_url,
             )
-        except ValueError as exc:
-            emit_error(
+        except JwtToolkitError as exc:
+            raise reported_as(
+                exc,
                 code="key_error",
                 title="Key Error",
                 headline="Could not verify signature with the provided key",
-                details=(str(exc),),
-                as_json=as_json,
-            )
-            raise SystemExit(2) from exc
+            ) from exc
         signature_check = (
             Check("PASS", "signature", "Signature is valid")
             if sig_valid
@@ -160,7 +142,6 @@ def _require_one_key_source(
     secret: str | None,
     public_key_path: Path | None,
     jwks_url: str | None,
-    as_json: bool,
 ) -> None:
     # Which key the operator supplied is a usage question (exit 2); whether the
     # token fits that key is a verdict on the token (exit 1).
@@ -172,17 +153,15 @@ def _require_one_key_source(
         if sources > 1
         else "Provide the key to verify with"
     )
-    emit_error(
-        code="invalid_key_options",
-        title="Invalid Input",
+    raise JwtToolkitError(
         headline=headline,
         details=(
             "--secret or --secret-file for HS* tokens; --public-key or --jwks-url for "
             "RS*, PS*, ES*, and Ed* tokens.",
         ),
-        as_json=as_json,
+        code="invalid_key_options",
+        title="Invalid Input",
     )
-    raise SystemExit(2)
 
 
 def _transport_checks(jwks_url: str | None) -> list[Check]:
@@ -249,7 +228,7 @@ def _emit_json(checks: list[Check], *, failed: bool) -> None:
         "checks": [{"result": c.result, "check": c.check, "detail": c.detail} for c in checks],
     }
     click.echo(json.dumps(document, indent=2))
-    raise SystemExit(1 if failed else 0)
+    raise click.exceptions.Exit(1 if failed else 0)
 
 
 def _render_results(checks: list[Check], *, failed: bool) -> None:
@@ -266,5 +245,5 @@ def _render_results(checks: list[Check], *, failed: bool) -> None:
 
     if failed:
         console.print(Panel("[bold red]INVALID[/bold red]", border_style="red"))
-        raise SystemExit(1)
+        raise click.exceptions.Exit(1)
     console.print(Panel("[bold green]VALID[/bold green]", border_style="green"))

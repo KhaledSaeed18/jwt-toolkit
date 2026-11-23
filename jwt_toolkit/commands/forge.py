@@ -7,8 +7,10 @@ from rich.panel import Panel
 from rich.table import Table
 
 from jwt_toolkit.cli.console import console, status_console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.cli.errors import ToolkitCommand, reported_as
 from jwt_toolkit.core.decoder import DecodedToken
+from jwt_toolkit.core.errors import JwtToolkitError
 from jwt_toolkit.core.forge import (
     ALL_VARIANT_NAMES,
     KEY_BASED_VARIANT_NAMES,
@@ -28,10 +30,11 @@ _INTRO = (
 
 
 @click.command(
+    cls=ToolkitCommand,
     help=(
         "Emit defensive attack-shaped variants of a JWT for self-audit. "
         "Every variant should be rejected by a correct verifier."
-    )
+    ),
 )
 @click.argument("token")
 @click.option(
@@ -58,18 +61,14 @@ _INTRO = (
     help="Emit a machine-readable JSON document instead of the rich table.",
 )
 def forge(token: str, public_key_path: Path | None, mode: str | None, as_json: bool) -> None:
-    token = resolve_token(token, as_json=as_json)
-    decoded = safe_decode(token, as_json=as_json)
+    decoded = safe_decode(resolve_token(token))
 
     pem: bytes | None = public_key_path.read_bytes() if public_key_path is not None else None
 
     try:
         variants = _select_variants(decoded, pem=pem, mode=mode)
-    except ValueError as exc:
-        emit_error(
-            code="invalid_key_options", title="Forge Error", headline=str(exc), as_json=as_json
-        )
-        raise SystemExit(2) from exc
+    except JwtToolkitError as exc:
+        raise reported_as(exc, code="invalid_key_options", title="Forge Error") from exc
 
     if as_json:
         _emit_json(variants, has_public_key=pem is not None)
