@@ -35,6 +35,9 @@ For transparency, the project ships through the following supply-chain controls;
 - **PEP 740 artifact attestations** on the wheel and sdist, signed via sigstore through the publish workflow.
 - **`pip-audit`** runs in CI against `uv.lock` on every push and PR; releases are blocked on a clean audit.
 - **`bandit`** runs in CI at medium severity; new findings block the gate.
-- **Dependabot** opens grouped weekly PRs for runtime and CI dependency bumps.
+- **Dependabot** opens grouped weekly PRs for runtime and CI dependency bumps, after a seven-day cooldown.
+- **GitHub Actions** are pinned to full commit SHAs and linted by `zizmor` in CI. Workflows default to read-only tokens; only the release-please job may write (to open the release PR and tag), only the publish job gets an OIDC token, and checkouts never persist credentials.
+- **Releases re-run the full CI matrix** on the tagged commit before building, and the built wheel and sdist are installed and smoke-tested outside the repository.
+- **Independent checks** of the JWS code: the test suite verifies the RFC 7515, RFC 8037 and RFC 7520 examples and cross-checks every algorithm with PyJWT, and property tests feed hostile tokens to every parser.
 
 If any of these stop working as described, that itself is a reportable issue.

@@ -40,10 +40,12 @@ Otherwise, group the touched files by area and run *only* the matching checks. R
 ### Crypto invariants (`core/crypto.py`, anything calling it)
 
 - Any `==`, `!=`, `bytes.startswith`, `in` on a signature, MAC, tag, or secret? **Finding.** Must use `hmac.compare_digest` or `cryptography`'s `.verify(...)`.
-- Did a `SUPPORTED_ALGORITHMS` / `RSA_ALGORITHMS` / `EC_ALGORITHMS` / `PSS_ALGORITHMS` key get renamed, removed, or reordered? Public API — **breaking change**, call it out.
+- Did the `ALGORITHMS` registry in `core/algorithms.py` change so that a `SUPPORTED_ALGORITHMS` / `RSA_ALGORITHMS` / `EC_ALGORITHMS` / `PSS_ALGORITHMS` key is renamed, removed, or reordered? Public API — **breaking change**, call it out (`tests/test_algorithms.py` pins them).
+- Does any JWS part get decoded without `canonical=True` (or the decoder's own check), so a token with altered pad bits still verifies? **Finding** (signature malleability).
 - Is `alg=none` ever accepted by the verifier (not the forger)? Search for `"none"` and `None` in verifier paths. **Hard rule violation.**
 - Algorithm confusion: does the verifier choose the algorithm from the token header rather than from the key material the caller supplied? **Finding.** Algorithm must be authoritatively pinned by the caller's key, not by an attacker-controlled header.
-- A new dependency for crypto (pyjwt, python-jose, authlib, jose, jwcrypto, etc.)? **Reject** — `CLAUDE.md` forbids this; the project re-implements JWS visibly on purpose.
+- A new runtime dependency for crypto (pyjwt, python-jose, authlib, jose, jwcrypto, etc.)? **Reject** — `CLAUDE.md` forbids this; the project re-implements JWS visibly on purpose. PyJWT in the `dev` group for `tests/test_interop.py` is allowed; an import of it from `jwt_toolkit/` is not.
+- Input parsing: a new limit, a scan of untrusted text with a backtracking regex, or a parser path that can raise something other than a `JwtToolkitError`? **Finding.** See the "Token input" section of `jwt_toolkit/core/CLAUDE.md`.
 
 ### Audit rules (`core/auditor.py`)
 

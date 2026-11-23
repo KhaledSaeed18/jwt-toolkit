@@ -80,11 +80,13 @@ Exit codes are documented in the README and are part of the CLI contract: `0` = 
 
 - `xfail_strict = true` — an `xfail` that unexpectedly passes is a failure. Remove the decorator when fixing the underlying issue.
 - `filterwarnings = error` — any warning fails the test. Don't suppress; fix the cause.
-- Coverage gate: 80%. `jwt_toolkit/cli/banner.py` is excluded (pure UX). Don't add new exclusions to dodge the gate.
+- Coverage gate: 80%, with no file excluded. Don't add exclusions to dodge the gate.
 - Tests run in parallel (`-n auto`) — no shared mutable state, no cwd dependence, no test-order coupling.
 - CLI tests live in `tests/test_cmd_*.py` and use Click's `CliRunner`. Core tests live in `tests/test_<module>.py` and exercise pure functions without going through the CLI.
 - Every new command needs at minimum: happy path, error path, and `--json` shape test if it supports `--json`.
 - **No network in tests.** JWKS-using code paths must use the offline fixtures in `tests/conftest.py` / `tests/helpers.py`.
+- Code that parses untrusted input gets property tests in `tests/test_properties.py` (Hypothesis, bounded examples): every outcome is a result or a `JwtToolkitError`, never another exception. Keep a minimized failure as a plain regression test.
+- Signing and verification changes must keep `tests/test_interop.py` green: the RFC 7515/8037/7520 examples in `tests/vectors/jws_rfc_examples.json` and PyJWT in both directions. PyJWT is a dev-only dependency for these tests; it must never become a runtime one.
 
 ## Release
 

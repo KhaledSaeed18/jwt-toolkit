@@ -1,6 +1,6 @@
 ---
 name: check
-description: Run the full CI gate (`make check` — lint + typecheck + test + security + audit) and report per-stage pass/fail with triage. Use before declaring non-trivial work done, before pushing, before opening a PR, or whenever the user asks "is this ready?".
+description: Run the full CI gate (`make check` — lint + typecheck + test + security + audit + actions + smoke) and report per-stage pass/fail with triage. Use before declaring non-trivial work done, before pushing, before opening a PR, or whenever the user asks "is this ready?".
 ---
 
 # /check — full CI gate
@@ -14,6 +14,8 @@ description: Run the full CI gate (`make check` — lint + typecheck + test + se
 3. **test** — `pytest --cov -n auto`, `fail_under = 80`, `xfail_strict = true`, warnings as errors. Fail = bad test, coverage drop, surprise xpass, or surfaced warning.
 4. **security** — `bandit` at medium+. Fail = a security-smell pattern landed (e.g., `assert` in non-test, `subprocess shell=True`, weak randomness).
 5. **audit** — `pip-audit` against `uv.lock`. Fail = a known CVE in a pinned dependency.
+6. **actions** — `zizmor` on `.github/workflows`, offline. Fail = a workflow security smell (unpinned action, template injection, persisted credentials).
+7. **smoke** — `scripts/package_check.py`: builds the wheel and sdist, checks their contents and `twine check --strict`, installs each into a fresh venv outside the repo and runs the `jwt-toolkit` entry point. Fail = a packaging or entry-point problem the in-repo tests can't see.
 
 ## How to run
 
@@ -32,6 +34,8 @@ After it finishes, summarize per stage with a one-line verdict. Use `✅` and `�
 - ✅ / ❌ **test** — pytest (note coverage % if reported)
 - ✅ / ❌ **security** — bandit
 - ✅ / ❌ **audit** — pip-audit
+- ✅ / ❌ **actions** — zizmor
+- ✅ / ❌ **smoke** — installed wheel and sdist
 
 If every stage passes, that's the whole report. Don't pad it.
 
@@ -41,6 +45,8 @@ If every stage passes, that's the whole report. Don't pad it.
 - **typecheck fail** — fix the type error. Don't reach for `# type: ignore` unless the user agrees. If you do add one, include the specific `[error-code]` and a one-line reason.
 - **test fail** — read the failure. If it's a coverage drop below 80, add tests rather than tweaking the threshold or adding `pragma: no cover`. If it's an `xfail`-that-passed, remove the `xfail` decorator — the bug is fixed.
 - **security fail** — surface the bandit finding (rule id + file:line). Don't suppress with `# nosec` without user okay; a finding is a question the author needs to answer.
+- **actions fail** — fix the workflow; keep actions pinned to full commit SHAs with the version comment.
+- **smoke fail** — read which artifact and which command failed; usually a file missing from the wheel or sdist, or an import that only works from the repo.
 - **audit fail** — print the CVE and affected package. Resolution is usually a `uv lock --upgrade-package <name>`; confirm with the user before bumping.
 
 ## Anti-patterns to refuse

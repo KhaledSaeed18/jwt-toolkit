@@ -1,6 +1,6 @@
 ---
 name: new-command
-description: Scaffold a new top-level Click subcommand for jwt-toolkit (the `jwt-toolkit <verb>` form, like `decode`, `audit`, `verify`). Creates `jwt_toolkit/commands/<name>.py`, registers it in `jwt_toolkit/cli/__init__.py` (import + `add_command` + aligned `CLI_HELP` entry), and writes a matching `tests/test_cmd_<name>.py`. Enforces the project's CLI conventions: `console`-only output, secrets as options not positional args, typed `core/errors` raised and translated, `--json` payloads carrying `JSON_SCHEMA_VERSION`. Use this skill only for **new top-level verbs**. Don't use it for adding flags or behavior to an existing command, for creating subcommands under an existing group, or for refactors — edit the existing file directly.
+description: Scaffold a new top-level Click subcommand for jwt-toolkit (the `jwt-toolkit <verb>` form, like `decode`, `audit`, `verify`). Creates `jwt_toolkit/commands/<name>.py`, registers it in `jwt_toolkit/cli/__init__.py` (import + `add_command`) and in the `COMMANDS` / `EXAMPLES` lists in `jwt_toolkit/cli/banner.py`, and writes a matching `tests/test_cmd_<name>.py`. Enforces the project's CLI conventions: `console`-only output, secrets as options not positional args, typed `core/errors` raised and translated, `--json` payloads carrying `JSON_SCHEMA_VERSION`. Use this skill only for **new top-level verbs**. Don't use it for adding flags or behavior to an existing command, for creating subcommands under an existing group, or for refactors — edit the existing file directly.
 disable-model-invocation: true
 ---
 
@@ -24,7 +24,7 @@ If any answer is "I'm not sure", stop and ask. Scaffolding is cheap to redo but 
 ## Step 1 — Validate the name
 
 - Must match `^[a-z][a-z0-9-]*$` (kebab) or `^[a-z][a-z0-9_]*$` (snake). Reject anything else with a one-line error.
-- **Must not collide with an existing command.** Before proposing the name, run `awk '/^Commands:/,/^$/' jwt_toolkit/cli/__init__.py | grep -E '^\s+[a-z-]+'` to list current verbs. As of writing those are: `decode`, `sign`, `audit`, `verify`, `forge`, `crack`, `generate-secret`, `download-wordlists`. If the requested name matches or near-matches one of these, stop and ask the user to pick another or to edit the existing command directly.
+- **Must not collide with an existing command.** Before proposing the name, read the `COMMANDS` tuple in `jwt_toolkit/cli/banner.py` (or run `uv run jwt-toolkit --help`) to list current verbs. As of 1.4.0 those are: `decode`, `sign`, `audit`, `verify`, `diff`, `forge`, `crack`, `generate-secret`, `download-wordlists`. If the requested name matches or near-matches one of these, stop and ask the user to pick another or to edit the existing command directly.
 
 ## Step 2 — Write `jwt_toolkit/commands/<snake_name>.py`
 
@@ -68,27 +68,21 @@ def <snake_name>(token: str, as_json: bool) -> None:
 - **No new dependencies.** If you think you need one, stop and ask the user — every new dep has to be justified per `CONTRIBUTING.md`.
 - **Logic belongs in `core/`.** If the command module exceeds ~60 lines of non-flag-parsing code, you're doing too much here. See `jwt_toolkit/core/CLAUDE.md`.
 
-## Step 3 — Register in `jwt_toolkit/cli/__init__.py`
+## Step 3 — Register the command
 
 Three edits, all needed:
 
-1. **Import** alongside the other command imports (alphabetical):
+1. **Import** in `jwt_toolkit/cli/__init__.py`, alongside the other command imports (alphabetical):
    ```python
    from jwt_toolkit.commands.<snake_name> import <snake_name>
    ```
-2. **Register** next to the other `cli.add_command(...)` calls (alphabetical):
+2. **Register** next to the other `cli.add_command(...)` calls in the same file (alphabetical):
    ```python
    cli.add_command(<snake_name>)
    ```
-3. **`CLI_HELP` block** — add a line under `Commands:` matching the existing column alignment. Don't eyeball it. After editing, verify with:
+3. **List it** in `jwt_toolkit/cli/banner.py`: add `("<kebab-name>", "<help sentence>")` to `COMMANDS` and one example to `EXAMPLES`. The plain `--help` text (`CLI_HELP`) and the banner help screen are both built from these tuples, so the column alignment is computed, never typed by hand. Match the order that is there (grouped by purpose).
 
-   ```sh
-   awk '/^Commands:/,/^$/' jwt_toolkit/cli/__init__.py | grep -E '^\s+[a-z-]+' | awk '{ printf "%2d  %s\n", length($1), $1 }'
-   ```
-
-   The widths should cluster — every command name shorter than the longest is left-justified in the same fixed field. If your new line's name is shorter than the longest and you wrote it with the wrong number of spaces, the description column drifts. Fix it before moving on; drift is visible to every CLI user forever.
-
-Don't reorder existing entries. Append in the conventional place (alphabetical within the block, unless the existing order is grouped by purpose — match what's there).
+Check the result with `uv run jwt-toolkit --help` and a bare `uv run jwt-toolkit --no-banner`.
 
 ## Step 4 — Write `tests/test_cmd_<snake_name>.py`
 
@@ -110,13 +104,13 @@ make fmt
 uv run pytest -n auto tests/test_cmd_<snake_name>.py
 ```
 
-Then **invoke `/check` for the full gate** before handing off — it runs lint + typecheck + tests + bandit + pip-audit consistently with CI, and that's what the project gates on. If coverage on the new module is below 80%, add tests; do not exclude the file from coverage reporting.
+Then **invoke `/check` for the full gate** before handing off — it runs lint + typecheck + tests + bandit + pip-audit + zizmor + the installed-package smoke test, consistently with CI, and that's what the project gates on. If coverage on the new module is below 80%, add tests; do not exclude the file from coverage reporting.
 
-After `/check` is green, **run `/security-review`** — the new command touches public-API surfaces (a new `--json` schema, new help-text voice, a new entry in `CLI_HELP`) and the review catches voice drift and secret-leakage in error messages that the gate doesn't.
+After `/check` is green, **run `/security-review`** — the new command touches public-API surfaces (a new `--json` schema, new help-text voice, a new entry in `COMMANDS`) and the review catches voice drift and secret-leakage in error messages that the gate doesn't.
 
 ## Step 6 — Do not
 
 - Do not bump the version. Releases are a separate `/release` workflow.
 - Do not edit `CHANGELOG.md` (if present) unless the user asks — that often happens during release.
 - Do not add `# type: ignore`, `# noqa`, or `# nosec` to make checks pass. If you're tempted, you're working around a real issue.
-- Do not add the command to README.md without user confirmation — the README has its own structure and tone.
+- Do not add the command to README.md without user confirmation — the README has its own structure and tone. When it is added, also add its error codes to the README "Scripting and CI" table.

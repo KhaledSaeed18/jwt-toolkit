@@ -16,7 +16,7 @@
 
 `jwt-toolkit` is a command-line tool for inspecting, auditing, verifying, and stress-testing JWTs. Point it at a token from your own system and it tells you what is wrong with it: a missing expiry, a guessable HMAC secret, a header that invites key confusion, a verifier that accepts `alg: none`. Every command has readable terminal output, and the ones you would script have a stable `--json` mode for CI.
 
-The JWS logic is implemented in the open on top of [`cryptography`](https://cryptography.io), with no dependency on `pyjwt` or `python-jose`, so you can read exactly how a signature is checked.
+The JWS logic is implemented in the open on top of [`cryptography`](https://cryptography.io), with no dependency on `pyjwt` or `python-jose`, so you can read exactly how a signature is checked. The test suite checks it against the published RFC examples and against PyJWT in both directions.
 
 ## Contents
 
@@ -384,6 +384,8 @@ Surrounding whitespace and line breaks are ignored, and a leading `Bearer ` is d
 | RSA-PSS | `PS256`, `PS384`, `PS512` | PEM, X.509, or JWKS (`kty: RSA`) |
 | ECDSA | `ES256`, `ES384`, `ES512` | PEM, X.509, or JWKS (`kty: EC`) |
 | EdDSA | `Ed25519`, `Ed448`, `EdDSA` | PEM, X.509, or JWKS (`kty: OKP`) |
+
+Every algorithm is tested against the RFC 7515, RFC 8037 and RFC 7520 examples where they exist, and against PyJWT in both directions.
 
 `alg` is matched case-sensitively, as RFC 7515 requires. `EdDSA` is the RFC 8037 name and takes its curve from the key. RFC 9864 deprecates it in favour of `Ed25519` and `Ed448`, so `audit` reports it as INFO. `alg: none` is never accepted by `verify`.
 

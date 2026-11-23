@@ -41,4 +41,4 @@ If something in jwt-toolkit or its documentation is hard or impossible to use wi
 
 Barriers are triaged like bugs. A fix that changes output may change the wording and layout of human-readable output in a minor release; `--json` output only gains fields.
 
-This statement was last reviewed for jwt-toolkit 1.3.0.
+This statement was last reviewed for jwt-toolkit 1.4.0.
