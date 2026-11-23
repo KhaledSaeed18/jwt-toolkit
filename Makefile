@@ -47,7 +47,7 @@ smoke:  ## Build, check and smoke-test the installed wheel and sdist.
 CLIPROBE_ENV ?= .smoke-env
 cliprobe:  ## Run cliprobe (needs Node 22+) against the installed wheel.
 	$(UV) run python scripts/package_check.py --keep-venv $(CLIPROBE_ENV)
-	$(UV) run python scripts/run_cliprobe.py $(CLIPROBE_ENV)
+	$(UV) run python scripts/run_cliprobe.py --strict $(CLIPROBE_ENV)
 
 check: lint typecheck test security audit actions smoke  ## Full local CI gate.
 

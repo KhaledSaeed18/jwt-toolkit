@@ -390,7 +390,7 @@ jwt-toolkit --quiet --no-color audit "$TOKEN" --json
 | Option | Environment variable | Effect |
 | --- | --- | --- |
 | `--quiet` | `JWT_TOOLKIT_QUIET=1` | Drop the banner, progress, and hints. Results and errors are always printed. |
-| `--no-color` | `NO_COLOR=1` | Disable colors. |
+| `--no-color` | `NO_COLOR=1` | Disable colors and text styles (no escape codes at all). |
 | `--no-banner` | `JWT_TOOLKIT_NO_BANNER=1` | Suppress the banner shown by a bare `jwt-toolkit`. |
 
 **Output streams.** Results go to stdout; errors, progress, and hints go to stderr, so `jwt-toolkit sign ... > token.jwt` captures only the token. Under `--json`, error documents are printed to stdout like any other result.
