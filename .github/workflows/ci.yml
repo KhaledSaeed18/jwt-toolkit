@@ -124,8 +124,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      # Not --strict yet: under NO_COLOR a terminal still gets dim and bold styles,
-      # which cliprobe reports as a warning.
+      # --strict: a warning (color in a pipe, NO_COLOR ignored, a prompt) fails too.
       - name: cliprobe self-check
         if: runner.os == 'Linux'
-        run: uv run python scripts/run_cliprobe.py "${{ runner.temp }}/pkg-env"
+        run: uv run python scripts/run_cliprobe.py --strict "${{ runner.temp }}/pkg-env"
