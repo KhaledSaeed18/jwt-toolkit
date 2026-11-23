@@ -54,10 +54,10 @@ Commands stay thin: they translate flags → core inputs, call into `core/`, the
 Three things are observable by downstream users and break things when you change them silently:
 
 1. **The CLI grammar** — command names, flag names, flag semantics. Renames or removals are breaking changes; add an alias before removing, or wait for a major version.
-2. **`--json` output shape.** Every command that supports `--json` includes `schema_version` (currently `"0.1"`, defined in `jwt_toolkit/cli/decoding.py`). **If you change a field name, type, or remove a field, bump `JSON_SCHEMA_VERSION`** and call it out in the PR. Adding new optional fields is non-breaking.
-3. **Stable error codes** — `core/errors.py` exceptions carry a machine-readable `code`. `--json` consumers key off these. Codes are forever; pick a new one rather than reusing or renaming an existing one.
+2. **`--json` output shape.** Every command that supports `--json` includes `schema_version` (currently `"0.1"`, defined in `jwt_toolkit/cli/errors.py` and re-exported from `cli/decoding.py`). **If you change a field name, type, or remove a field, bump `JSON_SCHEMA_VERSION`** and call it out in the PR. Adding new optional fields is non-breaking.
+3. **Stable error codes** — `core/errors.py` exceptions carry a machine-readable `code`. `--json` consumers key off these. Codes are forever; pick a new one rather than reusing or renaming an existing one. When a command keeps reporting a broad code it always used (`key_error`), wrap the core error with `reported_as(...)` so the specific code travels as the additive `cause` field. The README "Scripting and CI" table lists every code; keep it in sync.
 
-Exit codes are documented in the README and are part of the CLI contract: `0` = the check passed, `1` = it found a problem (invalid signature, grade F, secret cracked), `2` = the input, key, or options could not be used (Click's usage errors are also `2`). Render the failure with `emit_error` / `print_error`, then `raise SystemExit(code)`; never call `sys.exit()` from `core/`.
+Exit codes are documented in the README and are part of the CLI contract: `0` = the check passed, `1` = it found a problem (invalid signature, grade F, secret cracked), `2` = the input, key, or options could not be used (Click's usage errors are also `2`). Failures are raised, never rendered by hand: raise a `JwtToolkitError` (or a subclass) and the command's `ToolkitCommand` boundary in `jwt_toolkit/cli/errors.py` renders it once (a panel, or the JSON error document under `--json`) and exits with the error's `exit_code` (2 unless the class says otherwise). A result exit code (`1` for a finding) is `raise click.exceptions.Exit(code)`. Never `SystemExit` in `commands/`, never `sys.exit()` in `core/`.
 
 ## CLI conventions
 
@@ -65,7 +65,7 @@ Exit codes are documented in the README and are part of the CLI contract: `0` = 
 - `--quiet` drops only non-essential output. A command's result and its errors must still print under `--quiet`.
 - Global flags `--no-banner`, `--quiet`, `--no-color` exist for scripting. Any new command must respect them.
 - Secrets and keys: accept them as `--secret` / `--private-key`. **Never accept secrets as positional arguments** (they show up in shell history and `ps`). Don't echo their values in errors — refer to them by flag name only.
-- Errors are `raise click.ClickException("user-facing sentence")` from the command layer; deeper layers raise domain exceptions from `core/errors.py`. The CLI translates the latter into the former.
+- Every command is `@click.command(cls=ToolkitCommand, ...)`. Errors are `raise JwtToolkitError(headline=..., details=..., code=..., title=...)` (or a subclass from `core/errors.py`) with a one-sentence, security-outcome headline. Exceptions are frozen dataclasses declared with `@frozen_error`.
 - Match the help-text voice of existing commands: one short security-outcome sentence, no implementation detail.
 - When registering a new command, add it to `COMMANDS` (and an example to `EXAMPLES`) in `jwt_toolkit/cli/banner.py`. Both the plain `--help` text (`CLI_HELP`) and the banner help screen are built from those lists.
 

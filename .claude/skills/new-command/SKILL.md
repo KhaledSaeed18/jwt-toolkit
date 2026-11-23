@@ -37,17 +37,20 @@ import click
 
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION
+from jwt_toolkit.cli.errors import ToolkitCommand
+from jwt_toolkit.core.errors import JwtToolkitError
 # Plus any core helpers the command needs — keep logic in core/, not here.
 
 
 @click.command(
     name="<kebab-name>",
+    cls=ToolkitCommand,
     help="<one-sentence security outcome>.",
 )
 @click.argument("token")  # or @click.option(...) — see rules below
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
 def <snake_name>(token: str, as_json: bool) -> None:
-    # 1. Resolve / validate inputs. Raise click.ClickException on user error.
+    # 1. Resolve / validate inputs. Raise JwtToolkitError(headline=..., code=...) on user error.
     # 2. Call into jwt_toolkit.core.<...> for the actual work.
     # 3. If --json: click.echo(json.dumps({"schema_version": JSON_SCHEMA_VERSION, ...}, indent=2))
     # 4. Else: render via console / panels.
@@ -59,7 +62,7 @@ def <snake_name>(token: str, as_json: bool) -> None:
 - **Never `print()`.** Always `console.print(...)` for human output, `click.echo(...)` for `--json` payloads. `print` bypasses `--quiet`, `--no-color`, and the project's rich console wiring.
 - **`--json` payloads MUST include `"schema_version": JSON_SCHEMA_VERSION`** as the first key. Field names are part of the public API — pick them carefully and document them in the docstring.
 - **Secrets and keys are options, never positional arguments.** `--secret`, `--private-key`. Positional shows up in shell history and `ps`. Don't echo their values in errors; refer to the flag name only.
-- **Errors raise `click.ClickException("...")`** with a one-sentence user-facing message. Deeper layers raise from `jwt_toolkit.core.errors`; translate them at the command boundary.
+- **Errors raise `JwtToolkitError(headline=..., details=..., code=..., title=...)`** with a one-sentence user-facing headline and a new stable `code` (add it to the README error-code table). Core errors from `jwt_toolkit.core.errors` can simply propagate: `ToolkitCommand` renders the panel or the `--json` error document once and exits 2. Never `SystemExit`; a result exit code is `raise click.exceptions.Exit(n)`.
 - **Help-text voice matches the rest of the CLI.** One short sentence, security-outcome shaped, no implementation detail. ("Verify the signature and standard claims of a JWT." — not "Calls cryptography library to check signature.")
 - **Honor global flags** `--no-banner`, `--quiet`, `--no-color`, plus the env equivalents `JWT_TOOLKIT_QUIET=1` / `NO_COLOR=1`. Using `console.print(...)` and `click.echo(...)` (not bare `print`) is what makes this automatic — the `console` instance is wired up in `jwt_toolkit/cli/console.py` to read those signals. If you bypass `console`, you break scripting.
 - **No new dependencies.** If you think you need one, stop and ask the user — every new dep has to be justified per `CONTRIBUTING.md`.

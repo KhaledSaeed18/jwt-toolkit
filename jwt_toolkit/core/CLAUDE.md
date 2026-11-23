@@ -5,7 +5,7 @@ This package is the pure-logic layer. Files here are imported by `jwt_toolkit/co
 ## Layering
 
 - **No `click`, no `rich`, no `pyfiglet`.** Functions here return data, raise typed exceptions from `errors.py`, or write to explicit file/stream arguments. They never call `print()`, `click.echo()`, or `console.print()`. Rendering belongs in `cli/` and `commands/`.
-- **No `sys.exit()`.** Raise a domain exception; the command layer translates it into `click.ClickException` (and thus exit 1).
+- **No `sys.exit()`.** Raise a domain exception (a `JwtToolkitError` subclass); the CLI error boundary renders it and exits 2.
 - **No process-wide state.** No globals that hold a token, key, or wordlist between calls. Caches (e.g., JWKS) must be passed in or stored on an object the caller owns.
 
 ## Crypto invariants
@@ -19,7 +19,9 @@ This package is the pure-logic layer. Files here are imported by `jwt_toolkit/co
 
 ## Error model
 
-- Exceptions live in `errors.py` as frozen dataclasses.
+- Exceptions live in `errors.py` as frozen dataclasses, declared with `@frozen_error` (a plain `@dataclass(frozen=True)` breaks when Python sets `__traceback__` on a propagating exception). Every one subclasses `JwtToolkitError`, which is a `ValueError` for callers that caught `ValueError` before.
+- Never `raise ValueError` for a domain failure; pick the typed error or add one with a new code.
+- URLs in messages go through `redact_url()`; it drops userinfo, query, and fragment.
 - Each carries a stable machine-readable `code` field. **`code` values are forever** — `--json` consumers key off them. Renaming is a breaking change; bump `JSON_SCHEMA_VERSION` and call it out.
 - `headline` is the one-line user-facing message; `details` is an optional tuple of supporting lines. Keep both short, security-outcome-shaped, and free of internal jargon.
 - Never include secret material in any exception field. That includes the supplied `--secret`, the contents of a private key file, or the raw signature bytes when the failure is "didn't match".
