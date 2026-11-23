@@ -198,13 +198,15 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/). The form
 <optional footer>
 ```
 
-`<type>` must be one of: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `security`, `build`, `ci`, `style`.
+`<type>` must be one of: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `security`, `build`, `ci`, `style`, `revert`.
 
 `<scope>` is a short identifier for the area of the codebase. Use a command name, a `core/` module name, or a high-level area:
 
 - Command scopes: `audit`, `crack`, `decode`, `diff`, `verify`, `sign`, `forge`, `generate-secret`, `download-wordlists`
 - Core scopes: `core`, `auditor`, `claims`, `cracker`, `crypto`, `decoder`, `forge`, `jwks`, `wordlist`
 - Other scopes: `cli`, `readme`, `ci`, `deps`, `release`
+
+The `commit-msg` hook installed by `make install` checks these rules, and CI checks the PR title, because the squash commit on `main` uses it as the message and release-please reads it to decide the next version.
 
 Rules:
 
@@ -281,13 +283,14 @@ When working on security-relevant code:
 
 ## Releasing
 
-Releases are maintainer-only. The publish workflow uses PyPI Trusted Publishing through the `pypi` GitHub environment, which requires manual approval. The release flow is:
+Releases are maintainer-only and run through [release-please](https://github.com/googleapis/release-please) in `.github/workflows/publish.yml`:
 
-1. Bump the version in `pyproject.toml` on a release branch.
-2. Open a PR titled `chore(release): vX.Y.Z`.
-3. After merge, tag `main` with `vX.Y.Z` and push the tag.
-4. Create a GitHub release from the tag. The release body becomes the changelog entry.
-5. Approve the `pypi` environment when the publish workflow asks.
+1. Every push to `main` updates an open release PR titled `chore(release): vX.Y.Z`. It bumps the version in `pyproject.toml`, `uv.lock` and `.release-please-manifest.json`, and adds the `CHANGELOG.md` entry built from the commit messages since the last release.
+2. The version comes from those messages: `feat` gives a minor release, `fix`, `security`, `perf`, `revert` and `docs` give a patch, and `!` or a `BREAKING CHANGE:` footer gives a major. `build`, `ci`, `chore`, `test`, `refactor` and `style` never cause a release on their own.
+3. Leave the release PR open while changes accumulate. Merging it releases: the same workflow run tags the commit, creates the GitHub Release, runs the full CI gate on that commit, builds, and publishes to PyPI with Trusted Publishing.
+4. The publish job waits for approval of the `pypi` GitHub environment.
+
+If publishing fails after the tag exists, fix the cause and re-run it for that tag with `gh workflow run publish.yml --ref vX.Y.Z`. A version that reached PyPI can never be uploaded again; ship the next patch instead.
 
 Contributors do not need to do any of this. Maintainers handle releases.
 
