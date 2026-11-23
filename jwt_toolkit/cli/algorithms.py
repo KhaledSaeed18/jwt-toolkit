@@ -1,8 +1,10 @@
-from jwt_toolkit.core.crypto import (
-    ALL_SIGNING_ALGORITHMS,
+import dataclasses
+
+from jwt_toolkit.core.algorithms import (
     ASYMMETRIC_ALGORITHMS,
     SUPPORTED_ALGORITHMS,
     canonical_algorithm,
+    require_algorithm,
 )
 from jwt_toolkit.core.encoding import JsonObject
 from jwt_toolkit.core.errors import UnsupportedAlgorithmError
@@ -42,28 +44,12 @@ def ensure_hmac_algorithm(header: JsonObject, *, action: str) -> str:
 
 
 def ensure_signing_algorithm(header: JsonObject) -> str:
-    # Validates that the token's alg is any signing algorithm we can verify
-    # (HMAC or asymmetric). alg is case-sensitive (RFC 7515 4.1.1), so only
-    # the exact registered spelling is accepted.
-    alg = header.get("alg")
-    if isinstance(alg, str) and alg.upper() == "NONE":
-        raise UnsupportedAlgorithmError(
-            title="Verification Error",
-            headline="Token uses alg: none, it has no signature to verify",
-            details=("This token is completely unsigned and trivially forgeable",),
-        )
-    if not isinstance(alg, str) or alg not in ALL_SIGNING_ALGORITHMS:
-        details = [f"Supported: {', '.join(sorted(ALL_SIGNING_ALGORITHMS))}"]
-        canonical = canonical_algorithm(alg) if isinstance(alg, str) else None
-        if canonical is not None:
-            details.append(f"alg is case-sensitive; {alg!r} is not {canonical!r}")
-        shown = alg if isinstance(alg, str) else repr(alg)
-        raise UnsupportedAlgorithmError(
-            title="Verification Error",
-            headline=f"Unsupported algorithm: {shown}",
-            details=tuple(details),
-        )
-    return alg
+    # Any signing algorithm we can verify (HMAC or asymmetric), validated in core
+    # as an exact-case wire value; this layer only adds the panel title.
+    try:
+        return require_algorithm(header).name
+    except UnsupportedAlgorithmError as exc:
+        raise dataclasses.replace(exc, title="Verification Error") from exc
 
 
 def is_asymmetric(alg: str) -> bool:
