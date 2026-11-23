@@ -2,6 +2,23 @@
 
 All notable changes to jwt-toolkit. New entries are written by release-please from Conventional Commit messages; entries up to 1.2.1 were copied from the GitHub release notes.
 
+## [1.3.0](https://github.com/KhaledSaeed18/jwt-toolkit/compare/v1.2.1...v1.3.0) (2026-11-23)
+
+
+### Features
+
+* **cli:** report a specific cause code next to broad --json error codes ([34dabae](https://github.com/KhaledSaeed18/jwt-toolkit/commit/34dabaef92005971473ed031da1e367dfdbb0e19))
+
+
+### Bug Fixes
+
+* **cli:** emit no escape codes under NO_COLOR and --no-color ([#58](https://github.com/KhaledSaeed18/jwt-toolkit/issues/58)) ([0a6384d](https://github.com/KhaledSaeed18/jwt-toolkit/commit/0a6384dc8c8438eecd5b1bc6c3ced56304a6a05f))
+
+
+### Security
+
+* **cli:** never echo credentials from JWKS or wordlist source URLs ([34dabae](https://github.com/KhaledSaeed18/jwt-toolkit/commit/34dabaef92005971473ed031da1e367dfdbb0e19))
+
 ## [1.2.1](https://github.com/KhaledSaeed18/jwt-toolkit/compare/v1.2.0...v1.2.1) (2026-11-23)
 
 ### Fixes
