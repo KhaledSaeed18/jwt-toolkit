@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import math
+import re
 from typing import Any
 
 # JWT strips '=' padding by spec, so every encode trims it and every decode restores it.
@@ -18,17 +19,26 @@ def base64url_encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
 
+_BASE64URL = re.compile(r"[A-Za-z0-9_-]*=*")
+_BASE64 = re.compile(r"[A-Za-z0-9+/]*=*")
+
+
+def _strict_decode(value: str, alphabet: re.Pattern[str], altchars: bytes | None) -> bytes:
+    # Python 3.15 stopped rejecting characters outside the alphabet in non-validating
+    # mode, so the alphabet is checked here and the stdlib decode always validates.
+    if not alphabet.fullmatch(value):
+        raise binascii.Error("input contains characters outside the base64 alphabet")
+    return base64.b64decode(_pad(value.rstrip("=")), altchars=altchars, validate=True)
+
+
 def base64url_decode(value: str) -> bytes:
-    # The stdlib raises a bare ValueError for non-ASCII input; callers expect binascii.Error.
-    if not value.isascii():
-        raise binascii.Error("base64url input must be ASCII")
-    return base64.urlsafe_b64decode(_pad(value))
+    return _strict_decode(value, _BASE64URL, b"-_")
 
 
 def base64_decode_padded(value: str) -> bytes:
     # Standard base64 (not url-safe) with the same padding restoration —
     # used by `crack` when interpreting a wordlist entry as a base64 secret.
-    return base64.b64decode(_pad(value))
+    return _strict_decode(value, _BASE64, None)
 
 
 class NonFiniteNumberError(ValueError):
