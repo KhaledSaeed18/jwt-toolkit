@@ -2,6 +2,13 @@
 
 All notable changes to jwt-toolkit. New entries are written by release-please from Conventional Commit messages; entries up to 1.2.1 were copied from the GitHub release notes.
 
+## [1.4.1](https://github.com/KhaledSaeed18/jwt-toolkit/compare/v1.4.0...v1.4.1) (2026-11-23)
+
+
+### Documentation
+
+* sync contributor and security docs with 1.4.0 ([#74](https://github.com/KhaledSaeed18/jwt-toolkit/issues/74)) ([dd061ea](https://github.com/KhaledSaeed18/jwt-toolkit/commit/dd061ea07cafc31bb6725c8613af707cfc1ee0a1))
+
 ## [1.4.0](https://github.com/KhaledSaeed18/jwt-toolkit/compare/v1.3.0...v1.4.0) (2026-11-23)
 
 
