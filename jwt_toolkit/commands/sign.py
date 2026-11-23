@@ -18,7 +18,10 @@ from jwt_toolkit.core.crypto import (
     sign_asymmetric as _sign_asymmetric,
 )
 from jwt_toolkit.core.encoding import (
+    MAX_JSON_DEPTH,
+    DuplicateMemberError,
     JsonObject,
+    JsonTooDeepError,
     NonFiniteNumberError,
     base64url_encode,
     strict_json_loads,
@@ -261,6 +264,22 @@ def _parse_json_arg(raw: str, *, label: str) -> JsonObject:
             headline=f"Invalid {label} JSON",
             details=("NaN, Infinity, and overflowing numbers are not valid JSON.",),
             code="invalid_number",
+            title="Invalid Input",
+        ) from exc
+    except DuplicateMemberError as exc:
+        raise JwtToolkitError(
+            headline=f"Invalid {label} JSON",
+            details=(f"The member {str(exc)!r} appears twice; give each claim once.",),
+            code="invalid_json",
+            cause="duplicate_member",
+            title="Invalid Input",
+        ) from exc
+    except JsonTooDeepError as exc:
+        raise JwtToolkitError(
+            headline=f"Invalid {label} JSON",
+            details=(f"The JSON is nested deeper than {MAX_JSON_DEPTH} levels.",),
+            code="invalid_json",
+            cause="json_too_deep",
             title="Invalid Input",
         ) from exc
     except json.JSONDecodeError as exc:

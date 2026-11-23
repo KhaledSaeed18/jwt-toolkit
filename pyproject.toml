@@ -91,6 +91,7 @@ dev = [
     "zizmor>=1.33.1",
     "validate-pyproject[all]>=0.27",
     "twine>=7.0.0",
+    "hypothesis>=6.170.17",
 ]
 
 [tool.pytest.ini_options]

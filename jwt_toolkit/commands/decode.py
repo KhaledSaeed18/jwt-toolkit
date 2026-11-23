@@ -8,7 +8,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from jwt_toolkit.cli.console import console
+from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.cli.errors import ToolkitCommand
 from jwt_toolkit.core.encoding import JsonObject
@@ -19,7 +19,13 @@ from jwt_toolkit.core.timestamps import describe_time_claims
 @click.argument("token")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
 def decode(token: str, as_json: bool) -> None:
-    decoded = safe_decode(resolve_token(token))
+    # Inspection only, so a wrapped or pasted token is still shown, with a warning.
+    decoded = safe_decode(resolve_token(token), tolerate_whitespace=True)
+    if decoded.whitespace_removed:
+        status_console.print(
+            "[yellow]Whitespace inside the token was removed to decode it; "
+            "a server would reject the token as given.[/yellow]"
+        )
 
     if as_json:
         click.echo(

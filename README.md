@@ -362,6 +362,13 @@ The file is fetched over verified TLS from this release's git tag and checked ag
 
 Surrounding whitespace and line breaks are ignored, and a leading `Bearer ` is dropped, so a value copied from an `Authorization` header works as-is.
 
+**Input limits.** Tokens are untrusted input, so they are read strictly, the way a careful server would:
+
+- A token may be at most 256 KiB. Stdin and `@path` are read only up to that limit, never loaded whole.
+- Header and payload are base64url without `=` padding (RFC 7515), UTF-8 JSON objects, with no duplicate member names and at most 32 levels of nesting.
+- Whitespace inside a token is an error. Only `decode`, which never verifies, removes it so a wrapped token can still be read, and it says so on stderr.
+- The signature part is checked by the command that uses it: `verify` and `audit` report a malformed signature as a failed check.
+
 **HMAC secrets.** `--secret VALUE` is convenient but ends up in shell history and is visible to other users in process listings. Prefer `--secret-file FILE`: the file is read as UTF-8 text, and only a byte-order mark and one trailing newline are removed, so the output of `generate-secret --raw` works unchanged.
 
 **Asymmetric keys.** Private keys are PEM files in PKCS#8 or traditional format. Encrypted keys are supported through `--passphrase-file` or an interactive prompt. Public keys may be PEM `SubjectPublicKeyInfo` keys or X.509 certificates.
@@ -415,6 +422,7 @@ Error codes are stable: a code is never renamed or reused. When a command report
 | `invalid_base64url` | A token part is not valid base64url | all that take a token |
 | `invalid_json`, `invalid_json_object`, `invalid_number` | The header or payload is not a JSON object with finite numbers | all that take a token |
 | `token_unreadable` | `@path` could not be read as UTF-8 text | all that take a token |
+| `token_too_large` | The token is over the 256 KiB limit | all that take a token |
 | `stdin_conflict` | Both tokens were given as `-` | `diff` |
 | `invalid_key_options` | Missing, conflicting, or unusable key options | `verify`, `audit`, `forge` |
 | `key_error` | The supplied key or JWKS could not verify the token | `verify` |
@@ -424,6 +432,11 @@ Error codes are stable: a code is never renamed or reused. When a command report
 
 | `cause` | Meaning |
 | --- | --- |
+| `embedded_whitespace` | The token has whitespace inside it (with `invalid_structure`) |
+| `base64url_padding` | A token part ends in `=` padding (with `invalid_base64url`) |
+| `invalid_utf8` | The header or payload is not UTF-8 (with `invalid_base64url`) |
+| `duplicate_member` | A JSON member name appears twice (with `invalid_json`) |
+| `json_too_deep` | The JSON is nested more than 32 levels (with `invalid_json`) |
 | `key_parse_failed` | The key could not be read, decrypted, or used as a key |
 | `key_algorithm_mismatch` | The key belongs to another algorithm family or curve |
 | `key_not_public` | A private key was given where the public key belongs |
@@ -455,6 +468,7 @@ What `jwt-toolkit` guarantees about its own behavior:
 - Signatures and MACs are compared in constant time, through `hmac.compare_digest` or `cryptography`'s verifiers.
 - `verify` rejects `alg: none`, derives the algorithm family from the key you supply rather than from the token, matches `alg` case-sensitively, and rejects tokens that require unsupported `crit` extensions.
 - Header and payload must be JSON objects; `NaN`, `Infinity`, and overflowing numbers are rejected rather than compared.
+- Duplicate member names, over-deep nesting, non-UTF-8 text, padding, embedded whitespace, and tokens over 256 KiB are rejected, so the toolkit never reads a token differently from a strict server. See [Input limits](#passing-tokens-keys-and-secrets).
 - Secrets, passphrases, and private keys are never echoed in output or error messages.
 - Token contents are printed as literal text, so a crafted claim cannot inject terminal styling or crash the renderer.
 - The only network access is the JWKS fetch you request with `--jwks-url` and the explicit `download-wordlists` command, both over verified TLS when using HTTPS.
