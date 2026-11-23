@@ -245,3 +245,83 @@ def test_stripped_signature_fails_the_audit(runner):
     assert result.exit_code == 1
     findings = json.loads(result.stdout)["findings"]
     assert any(f["field"] == "signature" and f["severity"] == "CRITICAL" for f in findings)
+
+
+def _b64_int(value: int) -> str:
+    return base64url_encode(value.to_bytes((value.bit_length() + 7) // 8, "big"))
+
+
+def _jwks_url(tmp_path, private, *, kid: str) -> str:
+    numbers = private.public_key().public_numbers()
+    jwks = {
+        "keys": [{"kty": "RSA", "kid": kid, "n": _b64_int(numbers.n), "e": _b64_int(numbers.e)}]
+    }
+    path = tmp_path / "jwks.json"
+    path.write_text(json.dumps(jwks))
+    return path.as_uri()
+
+
+def _rs256_with_kid(private, kid: str) -> str:
+    pem = private.private_bytes(_s.Encoding.PEM, _s.PrivateFormat.PKCS8, _s.NoEncryption())
+    header = base64url_encode(json.dumps({"alg": "RS256", "typ": "JWT", "kid": kid}).encode())
+    payload = base64url_encode(json.dumps({"exp": int(time.time()) + 300}).encode())
+    return f"{header}.{payload}.{sign_asymmetric(header, payload, pem, 'RS256')}"
+
+
+def test_audit_verifies_the_signature_against_a_jwks(runner, tmp_path):
+    private = rsa.generate_private_key(65537, 2048)
+    url = _jwks_url(tmp_path, private, kid="k1")
+    document = json.loads(
+        invoke(runner, _rs256_with_kid(private, "k1"), "--jwks-url", url, "--json").stdout
+    )
+    assert document["signature_valid"] is True
+    assert document["signature_detail"] == "Signature is valid"
+
+
+def test_audit_reports_a_jwks_without_the_tokens_kid(runner, tmp_path):
+    private = rsa.generate_private_key(65537, 2048)
+    url = _jwks_url(tmp_path, private, kid="other")
+    result = invoke(runner, _rs256_with_kid(private, "k1"), "--jwks-url", url, "--json")
+    document = json.loads(result.stdout)
+    assert result.exit_code == 1
+    assert document["signature_valid"] is False
+    assert document["signature_detail"].startswith("Cannot verify: No JWKS key matches kid=")
+
+
+def test_audit_judges_a_weak_key_served_by_the_jwks(runner, tmp_path):
+    private = rsa.generate_private_key(65537, 1024)
+    url = _jwks_url(tmp_path, private, kid="k1")
+    document = json.loads(
+        invoke(runner, _rs256_with_kid(private, "k1"), "--jwks-url", url, "--json").stdout
+    )
+    assert document["grade"] == "F"
+    assert any(f["field"] == "key" and f["severity"] == "CRITICAL" for f in document["findings"])
+
+
+def test_audit_takes_one_key_source(runner, tmp_path, valid_token):
+    result = invoke(runner, valid_token, "--secret", "x", "--jwks-url", "file:///x", "--json")
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["message"] == (
+        "Pass only one of --secret, --public-key, or --jwks-url"
+    )
+
+
+def test_audit_signature_check_with_an_unverifiable_alg(runner):
+    token = make_token({"sub": "1"}, header_override={"alg": "hs256", "typ": "JWT"})
+    document = json.loads(invoke(runner, token, "--secret", TEST_SECRET, "--json").stdout)
+    assert document["signature_valid"] is False
+    assert document["signature_detail"] == "Cannot verify: Unsupported algorithm: hs256"
+
+
+def test_audit_hmac_token_with_a_public_key_asks_for_the_secret(runner, tmp_path, valid_token):
+    public = tmp_path / "key.pub"
+    public.write_bytes(
+        rsa.generate_private_key(65537, 2048)
+        .public_key()
+        .public_bytes(_s.Encoding.PEM, _s.PublicFormat.SubjectPublicKeyInfo)
+    )
+    document = json.loads(invoke(runner, valid_token, "--public-key", str(public), "--json").stdout)
+    assert document["signature_valid"] is False
+    assert document["signature_detail"] == (
+        "HS256 requires --secret or --secret-file to verify the signature"
+    )

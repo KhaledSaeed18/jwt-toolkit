@@ -2,16 +2,18 @@ import json
 from pathlib import Path
 
 import click
+from cryptography.hazmat.primitives import serialization
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
+from jwt_toolkit.cli.algorithms import is_hmac
 from jwt_toolkit.cli.console import console, status_console
 from jwt_toolkit.cli.credentials import SecretInputError, resolve_secret, secret_file_option
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.cli.errors import ToolkitCommand
 from jwt_toolkit.cli.wordlists import bundled_wordlist
+from jwt_toolkit.core.algorithms import AlgorithmSpec, require_algorithm
 from jwt_toolkit.core.auditor import (
     Finding,
     Grade,
@@ -21,10 +23,12 @@ from jwt_toolkit.core.auditor import (
     audit_public_key,
     run_audit,
 )
-from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
 from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.encoding import JsonObject
-from jwt_toolkit.core.errors import UnsupportedAlgorithmError
+from jwt_toolkit.core.errors import JwtToolkitError, UnsupportedAlgorithmError
+from jwt_toolkit.core.jwks import resolve_jwks_public_key
+from jwt_toolkit.core.keys import HmacKey, PublicKey, VerificationKey, load_public_key_for
+from jwt_toolkit.core.verifier import KeyResolver, check_signature
 from jwt_toolkit.core.wordlist import contains_secret
 
 _SEVERITY_COLORS = {
@@ -70,6 +74,16 @@ _GRADE_STYLES: dict[Grade, tuple[str, str]] = {
     "is included in the report. Mutually exclusive with --secret.",
 )
 @click.option(
+    "--jwks-url",
+    "jwks_url",
+    default=None,
+    help=(
+        "JWKS endpoint (https://, http://, or file://). The token's kid header selects the "
+        "key, and signature verification is included in the report. Mutually exclusive with "
+        "--secret/--public-key."
+    ),
+)
+@click.option(
     "--require",
     "required_claims",
     default="",
@@ -87,21 +101,38 @@ def audit(
     secret: str | None,
     secret_path: Path | None,
     public_key_path: Path | None,
+    jwks_url: str | None,
     required_claims: str,
 ) -> None:
     secret = resolve_secret(secret, secret_path)
-    if secret is not None and public_key_path is not None:
-        raise SecretInputError("Pass either --secret or --public-key, not both")
+    sources = sum(x is not None for x in (secret, public_key_path, jwks_url))
+    if sources > 1:
+        raise SecretInputError(
+            "Pass either --secret or --public-key, not both"
+            if jwks_url is None
+            else "Pass only one of --secret, --public-key, or --jwks-url"
+        )
 
     decoded = safe_decode(resolve_token(token))
     required = frozenset(c.strip() for c in required_claims.split(",") if c.strip())
 
     sig_result: tuple[bool, str] | None = None
     key_findings: list[Finding] = []
-    if secret is not None or public_key_path is not None:
-        sig_result = _check_signature(decoded, secret=secret, public_key_path=public_key_path)
+    if sources:
+        resolved: list[PublicKey] = []
+        sig_result = _check_signature(
+            decoded,
+            secret=secret,
+            public_key_path=public_key_path,
+            jwks_url=jwks_url,
+            resolved=resolved,
+        )
         key_findings = _audit_key_material(
-            decoded, secret=secret, public_key_path=public_key_path, verified=sig_result[0]
+            decoded,
+            secret=secret,
+            public_key_path=public_key_path,
+            jwks_key=resolved[0] if resolved else None,
+            verified=sig_result[0],
         )
 
     report = run_audit(
@@ -132,42 +163,61 @@ def audit(
 
 
 def _check_signature(
-    decoded: DecodedToken, *, secret: str | None, public_key_path: Path | None
+    decoded: DecodedToken,
+    *,
+    secret: str | None,
+    public_key_path: Path | None,
+    jwks_url: str | None,
+    resolved: list[PublicKey],
 ) -> tuple[bool, str]:
-    # Returns (valid, detail_message). Handles unsupported algorithms and key
-    # mismatches gracefully so the audit report still renders.
+    # Returns (valid, detail_message) for the report. Unsupported algorithms and
+    # unusable keys become a failed check, so the audit report still renders.
     try:
-        alg = ensure_signing_algorithm(decoded.header)
+        spec = require_algorithm(decoded.header)
     except UnsupportedAlgorithmError as exc:
         return (False, f"Cannot verify: {exc.headline}")
+    if spec.is_hmac and secret is None:
+        return (False, f"{spec.name} requires --secret or --secret-file to verify the signature")
+    if not spec.is_hmac and secret is not None:
+        return (False, f"{spec.name} requires --public-key to verify the signature")
 
-    if is_hmac(alg):
-        if secret is None:
-            return (False, f"{alg} requires --secret or --secret-file to verify the signature")
-        valid = verify_signature(
-            decoded.header_b64, decoded.payload_b64, decoded.signature, secret, alg
-        )
-    else:
-        if public_key_path is None:
-            return (False, f"{alg} requires --public-key to verify the signature")
-        try:
-            pem_bytes = public_key_path.read_bytes()
-            valid = verify_asymmetric(
-                decoded.header_b64, decoded.payload_b64, decoded.signature, pem_bytes, alg
-            )
-        except ValueError as exc:
-            return (False, f"Cannot verify: {exc}")
+    def resolve(token: DecodedToken, alg: AlgorithmSpec) -> PublicKey:
+        if jwks_url is not None:
+            key = resolve_jwks_public_key(jwks_url, kid=token.header.get("kid"), alg=alg.name)
+        else:
+            assert public_key_path is not None  # one key source was supplied
+            key = load_public_key_for(public_key_path.read_bytes(), alg)
+        resolved.append(key)
+        return key
 
-    if valid:
-        return (True, "Signature is valid")
-    return (False, "Signature is invalid, wrong key or tampered token")
+    key: VerificationKey | KeyResolver = (
+        HmacKey.from_text(secret) if secret is not None else resolve
+    )
+    try:
+        check = check_signature(decoded, key)
+    except JwtToolkitError as exc:
+        return (False, f"Cannot verify: {exc}")
+    return (check.result == "PASS", check.detail)
 
 
 def _audit_key_material(
-    decoded: DecodedToken, *, secret: str | None, public_key_path: Path | None, verified: bool
+    decoded: DecodedToken,
+    *,
+    secret: str | None,
+    public_key_path: Path | None,
+    jwks_key: PublicKey | None,
+    verified: bool,
 ) -> list[Finding]:
+    # A supplied key file is judged even when the token is rejected; a JWKS key
+    # only once the token's kid has selected it.
     if public_key_path is not None:
         return audit_public_key(public_key_path.read_bytes())
+    if jwks_key is not None:
+        return audit_public_key(
+            jwks_key.key.public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+        )
     alg = decoded.header.get("alg")
     # A secret that does not verify the token is not its key; judging it says nothing.
     if secret is None or not verified or not isinstance(alg, str) or not is_hmac(alg):
