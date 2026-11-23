@@ -33,11 +33,10 @@ from jwt_toolkit.core.keys import (
     VerificationKey,
     VerifyingPublicKey,
     as_private_key,
-    as_public_key,
     default_algorithm_for,
     ensure_key_matches_algorithm,
+    load_public_key_for,
     parse_private_key,
-    parse_public_key,
 )
 
 # The algorithm tables are derived from the registry in core/algorithms.py and
@@ -142,9 +141,7 @@ def verify_asymmetric(
             f"Unsupported algorithm: {alg}. "
             f"Asymmetric algorithms: {', '.join(sorted(ASYMMETRIC_ALGORITHMS))}"
         )
-    raw = parse_public_key(public_key_pem)
-    ensure_key_matches_algorithm(raw, alg, is_private=False)
-    key = as_public_key(raw)
+    key = load_public_key_for(public_key_pem, _spec(alg))
     message = f"{header_b64}.{payload_b64}".encode()
     return verify_with_key(message, signature, key, _spec(alg))
 

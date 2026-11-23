@@ -132,6 +132,14 @@ def load_public_key(pem: bytes) -> PublicKey:
     return as_public_key(parse_public_key(pem))
 
 
+def load_public_key_for(pem: bytes, spec: AlgorithmSpec) -> PublicKey:
+    # Parse, then check the family before the key type, so a key for another
+    # algorithm is reported as a mismatch rather than as an unusable key.
+    raw = parse_public_key(pem)
+    ensure_key_matches_algorithm(raw, spec.name, is_private=False)
+    return as_public_key(raw)
+
+
 def as_public_key(key: PublicKeyTypes) -> PublicKey:
     if not isinstance(key, _VERIFYING_PUBLIC_KEY_TYPES):
         raise KeyParseError(f"A {type(key).__name__} cannot verify a JWS")
