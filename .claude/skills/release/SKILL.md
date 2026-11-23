@@ -23,7 +23,7 @@ gh pr diff <N>
 ```
 
 - No open release PR means nothing user-facing has merged since the last tag (only `build`/`ci`/`chore`/`test`/`refactor`/`style` commits). Say so and stop.
-- The diff must touch only `pyproject.toml` (version), `uv.lock` (the `jwt-toolkit` package version), `.release-please-manifest.json`, and `CHANGELOG.md`.
+- The diff must touch only `pyproject.toml` (version), `uv.lock` (the `jwt-toolkit` package version), `.release-please-manifest.json`, `CHANGELOG.md`, and the `__version__` fallback in `jwt_toolkit/__init__.py` (used only when the package is not installed; release-please's python updater stamps it).
 - Read the changelog entry. Check the proposed bump against the commits since the last tag (`git log $(git describe --tags --abbrev=0)..origin/main --oneline`):
   - `JSON_SCHEMA_VERSION` changed: `git diff <last-tag>..origin/main -- jwt_toolkit/cli/decoding.py | grep -E '^[+-].*JSON_SCHEMA_VERSION'` → breaking.
   - An error `code` removed or renamed: `git diff <last-tag>..origin/main -- jwt_toolkit/core/errors.py | grep -E '^-.*code='` → breaking.
