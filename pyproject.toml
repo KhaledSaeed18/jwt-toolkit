@@ -38,7 +38,6 @@ classifiers = [
 dependencies = [
     "click>=8.4.1",
     "cryptography>=48.0.1",
-    "pyfiglet>=1.0.2",
     "rich>=15.0.0",
 ]
 
@@ -115,10 +114,6 @@ markers = [
 source = ["jwt_toolkit"]
 branch = true
 parallel = true
-omit = [
-    # Animated startup banner — pure UX decoration, no logic worth asserting.
-    "jwt_toolkit/cli/banner.py",
-]
 
 [tool.coverage.report]
 show_missing = true
@@ -178,17 +173,6 @@ strict = true
 pretty = true
 show_error_codes = true
 warn_unreachable = true
-
-# Third-party libs that ship no stubs:
-[[tool.mypy.overrides]]
-module = ["pyfiglet.*"]
-ignore_missing_imports = true
-
-# Animated startup banner — UX decoration, excluded for the same reason
-# as coverage (see [tool.coverage.run].omit).
-[[tool.mypy.overrides]]
-module = "jwt_toolkit.cli.banner"
-ignore_errors = true
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", "wordlists", "jwt_toolkit.egg-info"]
