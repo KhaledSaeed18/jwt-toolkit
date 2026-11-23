@@ -8,7 +8,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 
-from jwt_toolkit.core.crypto import canonical_algorithm
+from jwt_toolkit.core.algorithms import algorithm_spec, canonical_algorithm
 from jwt_toolkit.core.encoding import JsonObject, base64url_decode
 from jwt_toolkit.core.errors import (
     JwksAmbiguousError,
@@ -29,38 +29,6 @@ JWKS_FETCH_TIMEOUT_SECONDS = 10
 # Real key sets are a few kilobytes; the cap stops a hostile endpoint from
 # streaming an unbounded body into memory.
 MAX_JWKS_BYTES = 1_048_576
-
-# JWS algorithm → expected JWK key-type. Used to reject mismatches at selection
-# time rather than producing a confusing crypto error later.
-_KTY_BY_ALG = {
-    "RS256": "RSA",
-    "RS384": "RSA",
-    "RS512": "RSA",
-    "PS256": "RSA",
-    "PS384": "RSA",
-    "PS512": "RSA",
-    "ES256": "EC",
-    "ES384": "EC",
-    "ES512": "EC",
-    "EdDSA": "OKP",
-    "Ed25519": "OKP",
-    "Ed448": "OKP",
-}
-
-# JWS ES* alg → expected JWK `crv` parameter per RFC 7518 §6.2.1.1.
-# RFC 8037 2: OKP signing curves. X25519/X448 are key-agreement curves and
-# must never verify a signature.
-_OKP_CRVS_BY_ALG: dict[str, frozenset[str]] = {
-    "EdDSA": frozenset({"Ed25519", "Ed448"}),
-    "Ed25519": frozenset({"Ed25519"}),
-    "Ed448": frozenset({"Ed448"}),
-}
-
-_CRV_BY_ALG = {
-    "ES256": "P-256",
-    "ES384": "P-384",
-    "ES512": "P-521",
-}
 
 # JWK `crv` → cryptography curve class.
 _CURVE_BY_CRV: dict[str, type[ec.EllipticCurve]] = {
@@ -224,8 +192,9 @@ def _ensure_jwk_is_for_signatures(jwk: JsonObject) -> None:
 
 def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
     alg = canonical_algorithm(alg) or alg
-    expected_kty = _KTY_BY_ALG.get(alg)
-    if expected_kty is None:
+    spec = algorithm_spec(alg)
+    expected_kty = spec.jwk_kty if spec is not None else None
+    if spec is None or expected_kty is None:
         raise UnsupportedAlgorithmError(f"Cannot resolve JWK for unsupported alg: {alg}")
     actual_kty = jwk.get("kty")
     if actual_kty != expected_kty:
@@ -241,7 +210,7 @@ def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
 
     # For EC keys, the curve in the JWK must match the curve required by the alg.
     if expected_kty == "OKP":
-        allowed = _OKP_CRVS_BY_ALG[alg]
+        allowed = spec.jwk_crvs
         actual_crv = jwk.get("crv")
         if actual_crv not in allowed:
             raise KeyAlgorithmMismatchError(
@@ -249,7 +218,7 @@ def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
             )
 
     if expected_kty == "EC":
-        expected_crv = _CRV_BY_ALG[alg]
+        (expected_crv,) = spec.jwk_crvs
         actual_crv = jwk.get("crv")
         if actual_crv != expected_crv:
             raise KeyAlgorithmMismatchError(
