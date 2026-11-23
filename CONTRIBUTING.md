@@ -131,7 +131,7 @@ uv run jwt-toolkit --version
 make check
 ```
 
-`make check` runs the full local CI gate: lint, type checking, tests, security scan, and dependency audit. Run this before opening a pull request.
+`make check` runs the full local CI gate: lint, type checking, tests, security scan, dependency audit, and the GitHub Actions security lint. Run this before opening a pull request.
 
 ## Common tasks
 
@@ -147,6 +147,7 @@ make check
 | Coverage report on stdout            | `make cov`         |
 | Static security scan (bandit)        | `make security`    |
 | Check deps for known CVEs (pip-audit)| `make audit`       |
+| Security-lint workflows (zizmor)     | `make actions`     |
 | Full local CI gate                   | `make check`       |
 | Run all pre-commit hooks             | `make pre-commit`  |
 | Clean caches and build artifacts     | `make clean`       |
@@ -229,7 +230,7 @@ chore(deps): bump cryptography to 48.0.0
 3. Make focused commits that follow the conventions above.
 4. Run `make check` and make sure everything passes locally.
 5. Push your branch and open a pull request against `main`. Fill in every section of the PR template.
-6. The CI workflow runs lint, type check, tests, and security checks. All checks must pass.
+6. The CI workflow runs lint, type check, security checks, and the tests on Linux and Windows with every supported Python, plus macOS. All checks must pass. Actions are pinned to full commit SHAs; keep the version comment when you change one.
 7. A maintainer will review. Address review feedback by pushing additional commits to the same branch. Avoid force-pushing during review so reviewers can see incremental changes. Squash-merging is performed by the maintainer at merge time.
 8. Once approved and green, a maintainer merges with a squash commit whose message follows the conventional-commits format.
 

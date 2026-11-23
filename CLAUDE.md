@@ -26,7 +26,8 @@ make test         # pytest --cov -n auto  (coverage gate: 80%)
 make test-fast    # pytest -n auto, no coverage
 make security     # bandit (medium+)
 make audit        # pip-audit
-make check        # lint + typecheck + test + security + audit   ← full CI gate
+make actions      # zizmor (GitHub Actions security lint, offline)
+make check        # lint + typecheck + test + security + audit + actions   ← full CI gate
 make pre-commit   # pre-commit on all files
 ```
 

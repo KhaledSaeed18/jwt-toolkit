@@ -85,6 +85,7 @@ dev = [
     "pre-commit>=4.0",
     "bandit>=1.8",
     "pip-audit>=2.7",
+    "zizmor>=1.33.1",
 ]
 
 [tool.pytest.ini_options]
