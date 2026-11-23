@@ -173,7 +173,7 @@ def verify_with_key(
         # segment comes from the token unvalidated, so both sides are compared as bytes.
         return hmac.compare_digest(expected.encode(), signature.encode("utf-8", "surrogatepass"))
     try:
-        raw_sig = base64url_decode(signature)
+        raw_sig = base64url_decode(signature, canonical=True)
     except (ValueError, TypeError):
         return False
     try:

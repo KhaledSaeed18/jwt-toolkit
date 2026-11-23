@@ -365,7 +365,7 @@ Surrounding whitespace and line breaks are ignored, and a leading `Bearer ` is d
 **Input limits.** Tokens are untrusted input, so they are read strictly, the way a careful server would:
 
 - A token may be at most 256 KiB. Stdin and `@path` are read only up to that limit, never loaded whole.
-- Header and payload are base64url without `=` padding (RFC 7515), UTF-8 JSON objects, with no duplicate member names and at most 32 levels of nesting.
+- Every part is canonical base64url: no `=` padding (RFC 7515) and no stray bits in the last character, so a token has exactly one valid spelling. Header and payload are UTF-8 JSON objects, with no duplicate member names and at most 32 levels of nesting.
 - Whitespace inside a token is an error. Only `decode`, which never verifies, removes it so a wrapped token can still be read, and it says so on stderr.
 - The signature part is checked by the command that uses it: `verify` and `audit` report a malformed signature as a failed check.
 
@@ -434,6 +434,7 @@ Error codes are stable: a code is never renamed or reused. When a command report
 | --- | --- |
 | `embedded_whitespace` | The token has whitespace inside it (with `invalid_structure`) |
 | `base64url_padding` | A token part ends in `=` padding (with `invalid_base64url`) |
+| `base64url_noncanonical` | A token part has stray bits in its last character (with `invalid_base64url`) |
 | `invalid_utf8` | The header or payload is not UTF-8 (with `invalid_base64url`) |
 | `duplicate_member` | A JSON member name appears twice (with `invalid_json`) |
 | `json_too_deep` | The JSON is nested more than 32 levels (with `invalid_json`) |

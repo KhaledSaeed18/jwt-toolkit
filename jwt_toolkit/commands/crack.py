@@ -123,7 +123,7 @@ def crack(
             "Use audit to examine the token structure",
         )
     try:
-        signature = base64url_decode(decoded.signature)
+        signature = base64url_decode(decoded.signature, canonical=True)
     except binascii.Error:
         fail("invalid_base64url", "Token signature is not valid base64url, nothing to crack")
 

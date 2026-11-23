@@ -98,3 +98,11 @@ def test_depth_scan_is_linear_on_hostile_text(unit):
     with pytest.raises(ValueError):
         strict_json_loads(text)
     assert time.perf_counter() - start < 2
+
+
+def test_canonical_decode_rejects_altered_pad_bits():
+    # "abc" decodes to 2 bytes plus 2 unused bits; "abd" differs only in those bits.
+    assert base64url_decode("abd") == base64url_decode("abc")
+    assert base64url_decode("abc", canonical=True) == b"i\xb7"
+    with pytest.raises(binascii.Error):
+        base64url_decode("abd", canonical=True)
