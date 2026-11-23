@@ -2,6 +2,28 @@
 
 All notable changes to jwt-toolkit. New entries are written by release-please from Conventional Commit messages; entries up to 1.2.1 were copied from the GitHub release notes.
 
+## [1.4.0](https://github.com/KhaledSaeed18/jwt-toolkit/compare/v1.3.0...v1.4.0) (2026-11-23)
+
+
+### Features
+
+* **audit:** verify signatures against a JWKS through one core verifier ([#70](https://github.com/KhaledSaeed18/jwt-toolkit/issues/70)) ([3c5790d](https://github.com/KhaledSaeed18/jwt-toolkit/commit/3c5790dd4d3665b8238eef3c4a1b69a275cb9111))
+
+
+### Bug Fixes
+
+* **crypto:** reject JWS parts with altered base64url pad bits ([#73](https://github.com/KhaledSaeed18/jwt-toolkit/issues/73)) ([3842089](https://github.com/KhaledSaeed18/jwt-toolkit/commit/3842089caee15c254071e917e2945c33c88063df))
+
+
+### Security
+
+* **core:** bound and strictly validate token input ([#72](https://github.com/KhaledSaeed18/jwt-toolkit/issues/72)) ([e60ede2](https://github.com/KhaledSaeed18/jwt-toolkit/commit/e60ede2adaf31be222a242c288abae4ce886a567))
+
+
+### Documentation
+
+* add a code of conduct and an accessibility statement ([#66](https://github.com/KhaledSaeed18/jwt-toolkit/issues/66)) ([2e8765a](https://github.com/KhaledSaeed18/jwt-toolkit/commit/2e8765a02e91f90da1033e95d2c0eeae9f1d727e))
+
 ## [1.3.0](https://github.com/KhaledSaeed18/jwt-toolkit/compare/v1.2.1...v1.3.0) (2026-11-23)
 
 
