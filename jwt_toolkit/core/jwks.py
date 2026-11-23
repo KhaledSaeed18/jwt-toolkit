@@ -19,6 +19,7 @@ from jwt_toolkit.core.errors import (
     UnsupportedAlgorithmError,
     redact_url,
 )
+from jwt_toolkit.core.keys import PublicKey
 
 # RFC 7517 key sets. The fetch helper is intentionally thin: stdlib urllib only, with a fixed
 # timeout. Callers (and the audit module) are responsible for trust decisions
@@ -127,42 +128,47 @@ def select_jwk(jwks: JsonObject, *, kid: str | None, alg: str) -> JsonObject:
     return chosen
 
 
-def jwk_to_public_pem(jwk: JsonObject, alg: str) -> bytes:
-    # Materialises a JWK into PEM bytes that `verify_asymmetric` can consume.
-    # Mismatches between the JWK shape and the requested alg surface as
-    # ValueError before any crypto operation runs.
+def jwk_to_public_key(jwk: JsonObject, alg: str) -> PublicKey:
+    # Materialises a JWK into a verification key. Mismatches between the JWK
+    # shape and the requested alg raise before any crypto operation runs.
     _ensure_jwk_matches_alg(jwk, alg)
     kty = jwk.get("kty")
-    public_key: (
-        rsa.RSAPublicKey
-        | ec.EllipticCurvePublicKey
-        | ed25519.Ed25519PublicKey
-        | ed448.Ed448PublicKey
-    )
     if kty == "RSA":
-        public_key = _rsa_public_key_from_jwk(jwk)
-    elif kty == "EC":
-        public_key = _ec_public_key_from_jwk(jwk, alg)
-    elif kty == "OKP":
-        public_key = _okp_public_key_from_jwk(jwk)
-    else:
-        # Defensive — _ensure_jwk_matches_alg already rejects unsupported algs,
-        # but we may be called directly via a kty that has no JWS counterpart.
-        raise JwksInvalidError(f"Unsupported JWK kty: {kty!r}")
-    return public_key.public_bytes(
+        return PublicKey(_rsa_public_key_from_jwk(jwk))
+    if kty == "EC":
+        return PublicKey(_ec_public_key_from_jwk(jwk, alg))
+    if kty == "OKP":
+        return PublicKey(_okp_public_key_from_jwk(jwk))
+    # Defensive: _ensure_jwk_matches_alg already rejects unsupported algs, but we
+    # may be called directly with a kty that has no JWS counterpart.
+    raise JwksInvalidError(f"Unsupported JWK kty: {kty!r}")
+
+
+def jwk_to_public_pem(jwk: JsonObject, alg: str) -> bytes:
+    # PEM bytes that `verify_asymmetric` can consume.
+    return jwk_to_public_key(jwk, alg).key.public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
 
 
+def resolve_jwks_public_key(
+    url: str, *, kid: str | None, alg: str, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS
+) -> PublicKey:
+    # Fetch, select and materialise in one call, so the three steps share one
+    # error surface.
+    jwks = fetch_jwks(url, timeout=timeout)
+    return jwk_to_public_key(select_jwk(jwks, kid=kid, alg=alg), alg)
+
+
 def resolve_jwks_key(
     url: str, *, kid: str | None, alg: str, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS
 ) -> bytes:
-    # End-to-end convenience: fetch → select → materialise. The CLI layer
-    # should call this so the three steps share one error surface.
-    jwks = fetch_jwks(url, timeout=timeout)
-    jwk = select_jwk(jwks, kid=kid, alg=alg)
-    return jwk_to_public_pem(jwk, alg)
+    # The PEM form of resolve_jwks_public_key, kept for existing callers.
+    return resolve_jwks_public_key(url, kid=kid, alg=alg, timeout=timeout).key.public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
 
 
 def _filter_by_kid(keys: list[object], kid: str | None) -> list[JsonObject]:
