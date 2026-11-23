@@ -237,6 +237,10 @@ chore(deps): bump cryptography to 48.0.0
 7. A maintainer will review. Address review feedback by pushing additional commits to the same branch. Avoid force-pushing during review so reviewers can see incremental changes. Squash-merging is performed by the maintainer at merge time.
 8. Once approved and green, a maintainer merges with a squash commit whose message follows the conventional-commits format.
 
+### Dependabot pull requests
+
+Dependabot opens grouped pull requests on Mondays: runtime and dev dependencies (minor and patch), their major updates separately, security updates, and GitHub Actions. It waits seven days before proposing a new version, and updates `uv.lock` only, so the lower bounds in `pyproject.toml` stay low. Titles use `build(deps)`, `build(deps-dev)` and `ci(deps)`, which never cut a release on their own. Merge them with "squash and merge" once CI is green; if CI fails, fix it on the Dependabot branch before merging.
+
 ### What makes a good pull request
 
 - Small and focused. One logical change per PR.
