@@ -10,6 +10,15 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 
 from jwt_toolkit.core.crypto import canonical_algorithm
 from jwt_toolkit.core.encoding import JsonObject, base64url_decode
+from jwt_toolkit.core.errors import (
+    JwksAmbiguousError,
+    JwksFetchError,
+    JwksInvalidError,
+    JwksNoMatchingKeyError,
+    KeyAlgorithmMismatchError,
+    UnsupportedAlgorithmError,
+    redact_url,
+)
 
 # RFC 7517 key sets. The fetch helper is intentionally thin: stdlib urllib only, with a fixed
 # timeout. Callers (and the audit module) are responsible for trust decisions
@@ -84,35 +93,50 @@ class _NoDowngradeRedirectHandler(HTTPRedirectHandler):
 def fetch_jwks(url: str, *, timeout: int = JWKS_FETCH_TIMEOUT_SECONDS) -> JsonObject:
     # Retrieves and parses a JWKS document. Supports https://, http://, and
     # file:// via urllib so tests can use local files without a live server.
-    # Network and JSON failures are normalised to ValueError so the CLI layer
-    # has a single exception class to render.
+    # Network and JSON failures become typed JWKS errors. URLs in messages are
+    # redacted, since userinfo or a query string may carry credentials.
     scheme = urlparse(url).scheme
     if scheme not in _PERMITTED_JWKS_SCHEMES:
-        raise ValueError(f"JWKS URL scheme {scheme!r} is not permitted, use https, http, or file")
+        raise JwksFetchError(
+            f"JWKS URL scheme {scheme!r} is not permitted, use https, http, or file"
+        )
     opener = build_opener(_NoDowngradeRedirectHandler)
     try:
         with opener.open(url, timeout=timeout) as response:  # nosec B310 - scheme validated above
             body = response.read(MAX_JWKS_BYTES + 1)
     except HTTPError as exc:
-        raise ValueError(
-            f"Could not fetch JWKS from {url!r}: HTTP {exc.code} {exc.reason}"
+        raise JwksFetchError(
+            f"Could not fetch JWKS from {redact_url(url)!r}: HTTP {exc.code} {exc.reason}"
         ) from exc
     except URLError as exc:
         reason = getattr(exc.reason, "strerror", None) or str(exc.reason)
-        raise ValueError(f"Could not fetch JWKS from {url!r}: {reason}") from exc
+        raise JwksFetchError(
+            f"Could not fetch JWKS from {redact_url(url)!r}: {_scrub(reason, url)}"
+        ) from exc
     except (ValueError, OSError) as exc:
-        raise ValueError(f"Could not fetch JWKS from {url!r}: {exc}") from exc
+        raise JwksFetchError(
+            f"Could not fetch JWKS from {redact_url(url)!r}: {_scrub(str(exc), url)}"
+        ) from exc
     if len(body) > MAX_JWKS_BYTES:
-        raise ValueError(
-            f"JWKS at {url!r} is larger than {MAX_JWKS_BYTES // 1024} KiB, refusing it"
+        raise JwksInvalidError(
+            f"JWKS at {redact_url(url)!r} is larger than {MAX_JWKS_BYTES // 1024} KiB, refusing it"
         )
     try:
         document = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"JWKS at {url!r} is not valid JSON: {exc.msg}") from exc
+        raise JwksInvalidError(f"JWKS at {redact_url(url)!r} is not valid JSON: {exc.msg}") from exc
     if not isinstance(document, dict) or "keys" not in document:
-        raise ValueError(f"JWKS at {url!r} has no 'keys' array")
+        raise JwksInvalidError(f"JWKS at {redact_url(url)!r} has no 'keys' array")
     return document
+
+
+def _scrub(text: str, url: str) -> str:
+    # urllib messages can repeat the URL, or its userinfo, verbatim.
+    netloc = urlparse(url).netloc
+    text = text.replace(url, redact_url(url))
+    if "@" in netloc:
+        text = text.replace(netloc, netloc.rsplit("@", 1)[1])
+    return text
 
 
 def select_jwk(jwks: JsonObject, *, kid: str | None, alg: str) -> JsonObject:
@@ -120,14 +144,14 @@ def select_jwk(jwks: JsonObject, *, kid: str | None, alg: str) -> JsonObject:
     # Returns the JWK dict so the caller can decide how to materialise the key.
     keys = jwks.get("keys") or []
     if not isinstance(keys, list) or not keys:
-        raise ValueError("JWKS has no keys")
+        raise JwksInvalidError("JWKS has no keys")
 
     candidates = _filter_by_kid(keys, kid)
     if not candidates:
-        raise ValueError(f"No JWKS key matches kid={kid!r}")
+        raise JwksNoMatchingKeyError(f"No JWKS key matches kid={kid!r}")
     if len(candidates) > 1:
         # Ambiguity is a configuration bug — refusing it is safer than guessing.
-        raise ValueError(f"Multiple JWKS keys match kid={kid!r}: JWKS is ambiguous")
+        raise JwksAmbiguousError(f"Multiple JWKS keys match kid={kid!r}: JWKS is ambiguous")
 
     chosen = candidates[0]
     _ensure_jwk_is_for_signatures(chosen)
@@ -156,7 +180,7 @@ def jwk_to_public_pem(jwk: JsonObject, alg: str) -> bytes:
     else:
         # Defensive — _ensure_jwk_matches_alg already rejects unsupported algs,
         # but we may be called directly via a kty that has no JWS counterpart.
-        raise ValueError(f"Unsupported JWK kty: {kty!r}")
+        raise JwksInvalidError(f"Unsupported JWK kty: {kty!r}")
     return public_key.public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -180,11 +204,11 @@ def _filter_by_kid(keys: list[object], kid: str | None) -> list[JsonObject]:
     if kid is not None:
         return [k for k in keys if isinstance(k, dict) and k.get("kid") == kid]
     if len(keys) != 1:
-        raise ValueError(
+        raise JwksAmbiguousError(
             "Token header has no kid and JWKS contains multiple keys: refusing to guess"
         )
     if not isinstance(keys[0], dict):
-        raise ValueError("JWKS key is not a JSON object")
+        raise JwksInvalidError("JWKS key is not a JSON object")
     return [keys[0]]
 
 
@@ -192,20 +216,20 @@ def _ensure_jwk_is_for_signatures(jwk: JsonObject) -> None:
     # RFC 7517 4.2/4.3: a key published for encryption must not verify signatures.
     use = jwk.get("use")
     if use is not None and use != "sig":
-        raise ValueError(f"JWK use={use!r} is not 'sig', so it cannot verify signatures")
+        raise JwksInvalidError(f"JWK use={use!r} is not 'sig', so it cannot verify signatures")
     key_ops = jwk.get("key_ops")
     if key_ops is not None and (not isinstance(key_ops, list) or "verify" not in key_ops):
-        raise ValueError(f"JWK key_ops={key_ops!r} does not allow 'verify'")
+        raise JwksInvalidError(f"JWK key_ops={key_ops!r} does not allow 'verify'")
 
 
 def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
     alg = canonical_algorithm(alg) or alg
     expected_kty = _KTY_BY_ALG.get(alg)
     if expected_kty is None:
-        raise ValueError(f"Cannot resolve JWK for unsupported alg: {alg}")
+        raise UnsupportedAlgorithmError(f"Cannot resolve JWK for unsupported alg: {alg}")
     actual_kty = jwk.get("kty")
     if actual_kty != expected_kty:
-        raise ValueError(
+        raise KeyAlgorithmMismatchError(
             f"JWK kty={actual_kty!r} does not match alg={alg} (expected {expected_kty})"
         )
 
@@ -213,14 +237,14 @@ def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
     # token's alg, otherwise the keyset is configured for a different purpose.
     jwk_alg = jwk.get("alg")
     if jwk_alg is not None and jwk_alg != alg:
-        raise ValueError(f"JWK alg={jwk_alg!r} does not match token alg={alg}")
+        raise KeyAlgorithmMismatchError(f"JWK alg={jwk_alg!r} does not match token alg={alg}")
 
     # For EC keys, the curve in the JWK must match the curve required by the alg.
     if expected_kty == "OKP":
         allowed = _OKP_CRVS_BY_ALG[alg]
         actual_crv = jwk.get("crv")
         if actual_crv not in allowed:
-            raise ValueError(
+            raise KeyAlgorithmMismatchError(
                 f"JWK crv={actual_crv!r} does not match alg={alg} (expected {' or '.join(sorted(allowed))})"
             )
 
@@ -228,7 +252,7 @@ def _ensure_jwk_matches_alg(jwk: JsonObject, alg: str) -> None:
         expected_crv = _CRV_BY_ALG[alg]
         actual_crv = jwk.get("crv")
         if actual_crv != expected_crv:
-            raise ValueError(
+            raise KeyAlgorithmMismatchError(
                 f"JWK crv={actual_crv!r} does not match alg={alg} (expected {expected_crv})"
             )
 
@@ -238,9 +262,9 @@ def _rsa_public_key_from_jwk(jwk: JsonObject) -> rsa.RSAPublicKey:
         n = _b64url_to_int(jwk["n"])
         e = _b64url_to_int(jwk["e"])
     except KeyError as exc:
-        raise ValueError(f"RSA JWK is missing required field: {exc.args[0]!r}") from exc
+        raise JwksInvalidError(f"RSA JWK is missing required field: {exc.args[0]!r}") from exc
     except ValueError as exc:
-        raise ValueError(f"RSA JWK has malformed numeric field: {exc}") from exc
+        raise JwksInvalidError(f"RSA JWK has malformed numeric field: {exc}") from exc
     return rsa.RSAPublicNumbers(e=e, n=n).public_key()
 
 
@@ -248,14 +272,14 @@ def _ec_public_key_from_jwk(jwk: JsonObject, alg: str) -> ec.EllipticCurvePublic
     crv = jwk.get("crv")
     curve_cls = _CURVE_BY_CRV.get(str(crv))
     if curve_cls is None:
-        raise ValueError(f"Unsupported EC curve in JWK: {crv!r}")
+        raise JwksInvalidError(f"Unsupported EC curve in JWK: {crv!r}")
     try:
         x = _b64url_to_int(jwk["x"])
         y = _b64url_to_int(jwk["y"])
     except KeyError as exc:
-        raise ValueError(f"EC JWK is missing required field: {exc.args[0]!r}") from exc
+        raise JwksInvalidError(f"EC JWK is missing required field: {exc.args[0]!r}") from exc
     except ValueError as exc:
-        raise ValueError(f"EC JWK has malformed numeric field: {exc}") from exc
+        raise JwksInvalidError(f"EC JWK has malformed numeric field: {exc}") from exc
     # Curve already validated against alg by _ensure_jwk_matches_alg.
     del alg
     return ec.EllipticCurvePublicNumbers(x=x, y=y, curve=curve_cls()).public_key()
@@ -264,15 +288,15 @@ def _ec_public_key_from_jwk(jwk: JsonObject, alg: str) -> ec.EllipticCurvePublic
 def _okp_public_key_from_jwk(jwk: JsonObject) -> ed25519.Ed25519PublicKey | ed448.Ed448PublicKey:
     x = jwk.get("x")
     if not isinstance(x, str):
-        raise ValueError("OKP JWK is missing required field: 'x'")
+        raise JwksInvalidError("OKP JWK is missing required field: 'x'")
     key_cls = ed25519.Ed25519PublicKey if jwk.get("crv") == "Ed25519" else ed448.Ed448PublicKey
     try:
         return key_cls.from_public_bytes(base64url_decode(x))
     except ValueError as exc:
-        raise ValueError(f"OKP JWK has a malformed 'x' value: {exc}") from exc
+        raise JwksInvalidError(f"OKP JWK has a malformed 'x' value: {exc}") from exc
 
 
 def _b64url_to_int(value: str) -> int:
     if not isinstance(value, str):
-        raise ValueError(f"expected base64url string, got {type(value).__name__}")
+        raise JwksInvalidError(f"expected base64url string, got {type(value).__name__}")
     return int.from_bytes(base64url_decode(value), "big")

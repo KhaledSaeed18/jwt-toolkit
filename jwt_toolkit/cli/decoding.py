@@ -1,19 +1,15 @@
-import json
 import sys
 from pathlib import Path
 
-import click
-
-from jwt_toolkit.cli.panels import print_error
+from jwt_toolkit.cli.errors import JSON_SCHEMA_VERSION, render_error
 from jwt_toolkit.core.decoder import DecodedToken, decode_token
 from jwt_toolkit.core.encoding import JsonObject
-from jwt_toolkit.core.errors import TokenDecodeError, UnsupportedAlgorithmError
+from jwt_toolkit.core.errors import JwtToolkitError
 
-# Stable schema version shared by every command that emits --json errors.
-JSON_SCHEMA_VERSION = "0.1"
+__all__ = ["JSON_SCHEMA_VERSION", "emit_error", "resolve_token", "safe_decode"]
 
 
-def resolve_token(raw: str, *, as_json: bool = False) -> str:
+def resolve_token(raw: str) -> str:
     """Resolve the token string from a raw CLI argument.
 
     Accepts three forms:
@@ -36,15 +32,12 @@ def resolve_token(raw: str, *, as_json: bool = False) -> str:
                 if isinstance(exc, UnicodeDecodeError)
                 else exc.strerror or type(exc).__name__
             )
-            _emit_error(
-                code="token_unreadable",
-                title="Input Error",
+            raise JwtToolkitError(
                 headline=f"Cannot read token from {path!r}",
                 details=(reason,),
-                as_json=as_json,
-                extra=None,
-            )
-            raise SystemExit(2) from exc
+                code="token_unreadable",
+                title="Input Error",
+            ) from exc
     return _strip_bearer(raw)
 
 
@@ -55,25 +48,9 @@ def _strip_bearer(value: str) -> str:
     return rest.strip() if scheme.lower() == "bearer" and rest else value
 
 
-def safe_decode(
-    token: str,
-    *,
-    as_json: bool = False,
-) -> DecodedToken:
-    # Decode a token, rendering a consistent error panel/JSON on failure and
-    # exiting with code 2. The caller never has to know about the exception types.
-    try:
-        return decode_token(token)
-    except TokenDecodeError as exc:
-        _emit_error(
-            code=exc.code,
-            title=exc.title,
-            headline=exc.headline,
-            details=exc.details,
-            as_json=as_json,
-            extra=None,
-        )
-        raise SystemExit(2) from exc
+def safe_decode(token: str) -> DecodedToken:
+    # A TokenDecodeError reaches the command's error boundary, which renders it.
+    return decode_token(token)
 
 
 def emit_error(
@@ -85,34 +62,14 @@ def emit_error(
     as_json: bool,
     extra: JsonObject | None = None,
 ) -> None:
-    # Public entry for commands: a JSON envelope under --json, a panel otherwise.
-    _emit_error(
-        code=code, title=title, headline=headline, details=details, as_json=as_json, extra=extra
+    # For a command that reports an error and still exits with its own result code.
+    render_error(
+        JwtToolkitError(
+            headline=headline,
+            details=details,
+            code=code,
+            title=title,
+            extra=tuple((k, str(v)) for k, v in (extra or {}).items()),
+        ),
+        as_json=as_json,
     )
-
-
-def render_algorithm_error(exc: UnsupportedAlgorithmError) -> None:
-    print_error(exc.headline, *exc.details, title=exc.title)
-
-
-def _emit_error(
-    *,
-    code: str,
-    title: str,
-    headline: str,
-    details: tuple[str, ...],
-    as_json: bool,
-    extra: JsonObject | None,
-) -> None:
-    if as_json:
-        document = {
-            "schema_version": JSON_SCHEMA_VERSION,
-            "error": code,
-            "message": headline,
-            "detail": list(details),
-        }
-        if extra:
-            document.update(extra)
-        click.echo(json.dumps(document, indent=2))
-        return
-    print_error(headline, *details, title=title)

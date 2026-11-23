@@ -406,7 +406,35 @@ jwt-toolkit --quiet --no-color audit "$TOKEN" --json
 }
 ```
 
-Error codes include `invalid_structure`, `invalid_base64url`, `invalid_json`, `invalid_json_object`, `invalid_number`, `token_unreadable`, `unsupported_algorithm`, `invalid_key_options`, `key_error`, `stdin_conflict`, `signature_missing`, `wordlist_missing`, `wordlist_unreadable`, and `wordlist_empty`.
+Error codes are stable: a code is never renamed or reused. When a command reports a broad code, an optional `cause` field names the specific failure, for example `"error": "key_error", "cause": "jwks_no_matching_key"`. `diff` errors also carry `"input": "before"` or `"after"`.
+
+| `error` | Meaning | Commands |
+| --- | --- | --- |
+| `invalid_structure` | The token is not three dot-separated parts | all that take a token |
+| `invalid_base64url` | A token part is not valid base64url | all that take a token |
+| `invalid_json`, `invalid_json_object`, `invalid_number` | The header or payload is not a JSON object with finite numbers | all that take a token |
+| `token_unreadable` | `@path` could not be read as UTF-8 text | all that take a token |
+| `stdin_conflict` | Both tokens were given as `-` | `diff` |
+| `invalid_key_options` | Missing, conflicting, or unusable key options | `verify`, `audit`, `forge` |
+| `key_error` | The supplied key or JWKS could not verify the token | `verify` |
+| `unsupported_algorithm` | The token's `alg` cannot be used for this command | `crack` |
+| `signature_missing` | The token has an empty signature | `crack` |
+| `wordlist_missing`, `wordlist_unreadable`, `wordlist_empty` | The wordlist cannot be used | `crack` |
+
+| `cause` | Meaning |
+| --- | --- |
+| `key_parse_failed` | The key could not be read, decrypted, or used as a key |
+| `key_algorithm_mismatch` | The key belongs to another algorithm family or curve |
+| `key_not_public` | A private key was given where the public key belongs |
+| `key_passphrase_required` | The private key is encrypted and no passphrase was given |
+| `unsupported_algorithm` | The algorithm is not supported for this key |
+| `jwks_fetch_failed` | The JWKS could not be fetched |
+| `jwks_invalid` | The JWKS document, or the selected key, is malformed or not for signatures |
+| `jwks_no_matching_key` | No key in the JWKS matches the token's `kid` |
+| `jwks_ambiguous` | More than one key could match, so none is used |
+| `forge_variant_unknown`, `forge_variant_needs_key` | The `forge --mode` variant is unknown or needs `--public-key` |
+
+URLs in error messages are reduced to scheme, host, port, and path, so credentials or tokens in a JWKS URL are never echoed.
 
 **Exit codes.** `0` means the check passed, `1` means it found a problem, and `2` means the input could not be used. The exceptions are [`crack`](#crack), which exits `1` when it finds the secret, and [`diff`](#diff), which only exits `1` with `--exit-code`.
 

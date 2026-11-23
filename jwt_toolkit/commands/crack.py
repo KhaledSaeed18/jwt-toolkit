@@ -20,12 +20,13 @@ from rich.progress import (
 
 from jwt_toolkit.cli.algorithms import ensure_hmac_algorithm
 from jwt_toolkit.cli.console import console, status_console
-from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, emit_error, resolve_token, safe_decode
+from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
+from jwt_toolkit.cli.errors import ToolkitCommand
 from jwt_toolkit.cli.wordlists import BUNDLED_WORDLIST_NAME, bundled_wordlist
 from jwt_toolkit.core.cracker import MIN_PARALLEL_CANDIDATES, find_secret
 from jwt_toolkit.core.crypto import SUPPORTED_ALGORITHMS
 from jwt_toolkit.core.encoding import base64url_decode
-from jwt_toolkit.core.errors import UnsupportedAlgorithmError
+from jwt_toolkit.core.errors import JwtToolkitError
 from jwt_toolkit.core.wordlist import (
     ENCODING_MULTIPLIER,
     ENCODINGS,
@@ -63,10 +64,11 @@ def _format_rate(rate: float) -> str:
 
 
 @click.command(
+    cls=ToolkitCommand,
     help=(
         "Brute-force a weak HMAC JWT secret using a wordlist. "
         "Without WORDLIST, the bundled common-secrets list is used."
-    )
+    ),
 )
 @click.argument("token")
 @click.argument(
@@ -106,24 +108,12 @@ def crack(
     output: Path | None,
     as_json: bool,
 ) -> None:
-    token = resolve_token(token, as_json=as_json)
-    decoded = safe_decode(token, as_json=as_json)
+    decoded = safe_decode(resolve_token(token))
 
     def fail(code: str, headline: str, *details: str, title: str = "Cannot Crack") -> NoReturn:
-        emit_error(code=code, title=title, headline=headline, details=details, as_json=as_json)
-        raise SystemExit(2)
+        raise JwtToolkitError(headline=headline, details=details, code=code, title=title)
 
-    try:
-        alg = ensure_hmac_algorithm(decoded.header, action="crack")
-    except UnsupportedAlgorithmError as exc:
-        emit_error(
-            code=exc.code,
-            title=exc.title,
-            headline=exc.headline,
-            details=exc.details,
-            as_json=as_json,
-        )
-        raise SystemExit(2) from exc
+    alg = ensure_hmac_algorithm(decoded.header, action="crack")
 
     if not decoded.signature:
         fail(
@@ -198,7 +188,7 @@ def crack(
     else:
         _render_not_found(outcome)
     # Found means the token is weak: exit 1 so CI gates fail on it.
-    raise SystemExit(1 if outcome.match is not None else 0)
+    raise click.exceptions.Exit(1 if outcome.match is not None else 0)
 
 
 def _run_crack(

@@ -1,7 +1,8 @@
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
+
+from jwt_toolkit.core.errors import JwtToolkitError, frozen_error
 
 SECRET_FILE_HELP = (
     "File holding the HMAC secret as UTF-8 text, so it stays out of shell history. "
@@ -9,14 +10,11 @@ SECRET_FILE_HELP = (
 )
 
 
-@dataclass(frozen=True)
-class SecretInputError(Exception):
+@frozen_error
+class SecretInputError(JwtToolkitError):
     # Messages name the flag only; they never include secret material.
-    headline: str
-    details: tuple[str, ...] = field(default=())
-
-    def __str__(self) -> str:
-        return self.headline
+    code: str = "invalid_key_options"
+    title: str = "Invalid Input"
 
 
 secret_file_option = click.option(

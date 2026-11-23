@@ -13,7 +13,12 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 )
 
 from jwt_toolkit.core.encoding import base64url_decode, base64url_encode
-from jwt_toolkit.core.errors import KeyPassphraseRequiredError
+from jwt_toolkit.core.errors import (
+    KeyAlgorithmMismatchError,
+    KeyParseError,
+    KeyPassphraseRequiredError,
+    UnsupportedAlgorithmError,
+)
 
 # HMAC algorithms — symmetric, shared-secret. Kept as a dict so `crack` can iterate
 # `(alg, digestmod)` directly. Public API: do not rename.
@@ -116,7 +121,7 @@ _EC_RAW_SIG_HALF_BYTES = {
 def sign(header_b64: str, payload_b64: str, secret: str, alg: str = "HS256") -> str:
     digestmod = SUPPORTED_ALGORITHMS.get(alg.upper())
     if digestmod is None:
-        raise ValueError(
+        raise UnsupportedAlgorithmError(
             f"Unsupported algorithm: {alg}. Supported: {', '.join(SUPPORTED_ALGORITHMS)}"
         )
     # Signing input is exactly header_b64 + "." + payload_b64 as defined by the JWT spec.
@@ -149,7 +154,7 @@ def sign_asymmetric(
 ) -> str:
     alg = canonical_algorithm(alg) or alg
     if alg not in ASYMMETRIC_ALGORITHMS:
-        raise ValueError(
+        raise UnsupportedAlgorithmError(
             f"Unsupported algorithm: {alg}. "
             f"Asymmetric algorithms: {', '.join(sorted(ASYMMETRIC_ALGORITHMS))}"
         )
@@ -168,7 +173,7 @@ def verify_asymmetric(
 ) -> bool:
     alg = canonical_algorithm(alg) or alg
     if alg not in ASYMMETRIC_ALGORITHMS:
-        raise ValueError(
+        raise UnsupportedAlgorithmError(
             f"Unsupported algorithm: {alg}. "
             f"Asymmetric algorithms: {', '.join(sorted(ASYMMETRIC_ALGORITHMS))}"
         )
@@ -195,12 +200,12 @@ def algorithm_for_private_key(pem: bytes, *, passphrase: bytes | None = None) ->
         for alg, curve in _EC_CURVE_BY_ALG.items():
             if isinstance(key.curve, curve):
                 return alg
-        raise ValueError(f"EC curve {key.curve.name} has no JWS algorithm")
+        raise KeyAlgorithmMismatchError(f"EC curve {key.curve.name} has no JWS algorithm")
     if isinstance(key, ed25519.Ed25519PrivateKey):
         return "Ed25519"
     if isinstance(key, ed448.Ed448PrivateKey):
         return "Ed448"
-    raise ValueError(f"A {type(key).__name__} cannot sign a JWS")
+    raise KeyParseError(f"A {type(key).__name__} cannot sign a JWS")
 
 
 def _load_private_key(
@@ -209,7 +214,7 @@ def _load_private_key(
     key = _parse_private_key(pem, passphrase)
     _ensure_key_matches_alg(key, alg, is_private=True)
     if not isinstance(key, _SIGNING_PRIVATE_KEY_TYPES):
-        raise ValueError(f"A {type(key).__name__} cannot sign a JWS")
+        raise KeyParseError(f"A {type(key).__name__} cannot sign a JWS")
     return key
 
 
@@ -220,11 +225,11 @@ def _parse_private_key(pem: bytes, passphrase: bytes | None) -> PrivateKeyTypes:
         # cryptography signals passphrase/encryption mismatches with TypeError.
         if passphrase is None:
             raise KeyPassphraseRequiredError() from exc
-        raise ValueError("A passphrase was given but the private key is not encrypted") from exc
+        raise KeyParseError("A passphrase was given but the private key is not encrypted") from exc
     except ValueError as exc:
         if passphrase is not None and b"ENCRYPTED" in pem:
-            raise ValueError("Could not decrypt the private key: wrong passphrase") from exc
-        raise ValueError(f"Could not parse PEM private key: {exc}") from exc
+            raise KeyParseError("Could not decrypt the private key: wrong passphrase") from exc
+        raise KeyParseError(f"Could not parse PEM private key: {exc}") from exc
 
 
 def _load_public_key(pem: bytes, alg: str) -> _VerifyingPublicKey:
@@ -237,10 +242,10 @@ def _load_public_key(pem: bytes, alg: str) -> _VerifyingPublicKey:
         else:
             key = serialization.load_pem_public_key(pem)
     except (ValueError, TypeError) as exc:
-        raise ValueError(f"Could not parse PEM public key or certificate: {exc}") from exc
+        raise KeyParseError(f"Could not parse PEM public key or certificate: {exc}") from exc
     _ensure_key_matches_alg(key, alg, is_private=False)
     if not isinstance(key, _VERIFYING_PUBLIC_KEY_TYPES):
-        raise ValueError(f"A {type(key).__name__} cannot verify a JWS")
+        raise KeyParseError(f"A {type(key).__name__} cannot verify a JWS")
     return key
 
 
@@ -251,25 +256,33 @@ def _ensure_key_matches_alg(
     if alg in RSA_ALGORITHMS or alg in PSS_ALGORITHMS:
         expected = rsa.RSAPrivateKey if is_private else rsa.RSAPublicKey
         if not isinstance(key, expected):
-            raise ValueError(f"{alg} requires an RSA {role} key, got {type(key).__name__}")
+            raise KeyAlgorithmMismatchError(
+                f"{alg} requires an RSA {role} key, got {type(key).__name__}"
+            )
         return
     if alg in EC_ALGORITHMS:
         if not isinstance(key, ec.EllipticCurvePrivateKey | ec.EllipticCurvePublicKey) or (
             isinstance(key, ec.EllipticCurvePrivateKey) is not is_private
         ):
-            raise ValueError(f"{alg} requires an EC {role} key, got {type(key).__name__}")
+            raise KeyAlgorithmMismatchError(
+                f"{alg} requires an EC {role} key, got {type(key).__name__}"
+            )
         expected_curve = _EC_CURVE_BY_ALG[alg]
         if not isinstance(key.curve, expected_curve):
-            raise ValueError(f"{alg} requires curve {expected_curve.name}, got {key.curve.name}")
+            raise KeyAlgorithmMismatchError(
+                f"{alg} requires curve {expected_curve.name}, got {key.curve.name}"
+            )
         return
     if alg in OKP_ALGORITHMS:
         expected_okp = (_OKP_PRIVATE_KEY_TYPES if is_private else _OKP_PUBLIC_KEY_TYPES)[alg]
         if not isinstance(key, expected_okp):
             curve = "an Ed25519 or Ed448" if alg == "EdDSA" else f"an {alg}"
-            raise ValueError(f"{alg} requires {curve} {role} key, got {type(key).__name__}")
+            raise KeyAlgorithmMismatchError(
+                f"{alg} requires {curve} {role} key, got {type(key).__name__}"
+            )
         return
     # Unreachable: callers check alg against ASYMMETRIC_ALGORITHMS first.
-    raise ValueError(f"Unsupported asymmetric algorithm: {alg}")
+    raise UnsupportedAlgorithmError(f"Unsupported asymmetric algorithm: {alg}")
 
 
 def _pss_padding(hash_alg: hashes.HashAlgorithm) -> padding.PSS:

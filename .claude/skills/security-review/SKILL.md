@@ -85,8 +85,8 @@ Otherwise, group the touched files by area and run *only* the matching checks. R
 - New `--json` field? It's now public API. Confirm `JSON_SCHEMA_VERSION` is bumped if any existing field was renamed, removed, or retyped. Adding optional fields is non-breaking.
 - Any secret accepted as a positional argument (i.e., `@click.argument("secret")` instead of `@click.option("--secret", ...)`)? Must be an option — positional secrets land in shell history and `ps`.
 - New `@click.command(help="...")` string: does it match the existing security-outcome voice ("Verify the signature and standard claims of a JWT.") rather than describing implementation ("Calls cryptography library...")? Voice drift here is visible to every CLI user forever.
-- Error path: does the command raise `click.ClickException(...)` with a one-sentence user-facing message, or does it let a raw traceback escape? Tracebacks in normal failure paths leak structural info and confuse users.
-- Is `sys.exit(N)` used? Must be `raise click.ClickException(...)` so messaging routes through the project console and exit code routing stays consistent.
+- Error path: does the command raise a `JwtToolkitError` (handled by `ToolkitCommand`) with a one-sentence user-facing headline, or does it let a raw traceback escape? Tracebacks in normal failure paths leak structural info and confuse users.
+- Is `sys.exit(N)` or `SystemExit` used in `commands/`? Errors must be raised as `JwtToolkitError` and result codes as `click.exceptions.Exit(n)`, so rendering and exit codes stay in the one boundary. Does any message interpolate a URL without `redact_url()`?
 - Is `core/` logic invoked, or did logic creep into the command body? Commands stay thin (~60 lines of non-flag-parsing code is the rough ceiling).
 
 ### CLI plumbing (`jwt_toolkit/cli/*`)

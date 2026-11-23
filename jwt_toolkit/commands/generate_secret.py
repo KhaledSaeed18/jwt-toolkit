@@ -4,7 +4,9 @@ from collections.abc import Callable
 
 import click
 
-from jwt_toolkit.cli.panels import print_error, print_success
+from jwt_toolkit.cli.errors import ToolkitCommand
+from jwt_toolkit.cli.panels import print_success
+from jwt_toolkit.core.errors import JwtToolkitError
 
 # Generate-secret command — emits a cryptographically strong random secret in
 # hex or base64, with a strength label derived from the bit length.
@@ -29,13 +31,12 @@ def _validate_bits(bits: int) -> None:
         if not predicate(bits):
             continue
         hint = suggestion(bits) if callable(suggestion) else suggestion
-        print_error(
-            headline,
-            f"You passed  : {bits} bits",
-            hint,
+        raise JwtToolkitError(
+            headline=headline,
+            details=(f"You passed  : {bits} bits", hint),
+            code="invalid_input",
             title="Invalid Input",
         )
-        raise SystemExit(2)
 
 
 def _strength_for(bits: int) -> str:
@@ -46,7 +47,9 @@ def _strength_for(bits: int) -> str:
     return "weak, use at least 128 bits"
 
 
-@click.command(help="Generate a cryptographically strong random secret for signing JWTs.")
+@click.command(
+    cls=ToolkitCommand, help="Generate a cryptographically strong random secret for signing JWTs."
+)
 @click.option(
     "--bits", default=256, show_default=True, help="Secret length in bits (must be a multiple of 8)"
 )

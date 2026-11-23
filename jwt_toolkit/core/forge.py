@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 from jwt_toolkit.core.decoder import DecodedToken
 from jwt_toolkit.core.encoding import JsonObject, base64url_encode
+from jwt_toolkit.core.errors import (
+    ForgeVariantNeedsKeyError,
+    ForgeVariantUnknownError,
+    KeyNotPublicError,
+)
 
 # Every variant in this module is designed to be REJECTED by a correctly
 # configured verifier. The caller's job is to feed each variant at their
@@ -103,17 +108,19 @@ def forge_one(
 ) -> Variant:
     builder = _BUILDERS.get(name)
     if builder is None:
-        raise ValueError(
+        raise ForgeVariantUnknownError(
             f"Unknown forge variant: {name}. Available: {', '.join(ALL_VARIANT_NAMES)}"
         )
     if name in KEY_BASED_VARIANT_NAMES and public_key_pem is None:
-        raise ValueError(
+        raise ForgeVariantNeedsKeyError(
             f"Variant {name!r} requires --public-key: it forges using the "
             "verifier's own public key as an HMAC secret."
         )
     if name in KEY_BASED_VARIANT_NAMES and b"PRIVATE KEY" in (public_key_pem or b""):
         # The variant replays what a verifier publishes; a private key here is a mix-up.
-        raise ValueError("--public-key holds a private key. Pass the public key the verifier uses.")
+        raise KeyNotPublicError(
+            "--public-key holds a private key. Pass the public key the verifier uses."
+        )
     return builder(decoded, public_key_pem)
 
 
