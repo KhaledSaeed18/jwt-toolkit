@@ -1,7 +1,7 @@
 # jwt-toolkit dev commands. Run `make` or `make help` for the list.
 
 .DEFAULT_GOAL := help
-.PHONY: help install fmt lint typecheck test test-fast cov security audit actions check pre-commit clean
+.PHONY: help install fmt lint typecheck test test-fast cov security audit actions smoke cliprobe check pre-commit clean
 
 UV ?= uv
 
@@ -41,11 +41,19 @@ audit:  ## Check dependencies for known CVEs.
 actions:  ## Security-lint the GitHub Actions workflows (zizmor).
 	$(UV) run zizmor --offline --persona=regular .github/workflows
 
-check: lint typecheck test security audit actions  ## Full local CI gate.
+smoke:  ## Build, check and smoke-test the installed wheel and sdist.
+	$(UV) run python scripts/package_check.py
+
+CLIPROBE_ENV ?= .smoke-env
+cliprobe:  ## Run cliprobe (needs Node 22+) against the installed wheel.
+	$(UV) run python scripts/package_check.py --keep-venv $(CLIPROBE_ENV)
+	$(UV) run python scripts/run_cliprobe.py $(CLIPROBE_ENV)
+
+check: lint typecheck test security audit actions smoke  ## Full local CI gate.
 
 pre-commit:  ## Run all pre-commit hooks on every file.
 	$(UV) run pre-commit run --all-files
 
 clean:  ## Remove caches and build artifacts.
-	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage coverage.xml htmlcov dist build
+	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage coverage.xml htmlcov dist build .smoke-env
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

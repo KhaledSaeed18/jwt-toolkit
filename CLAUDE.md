@@ -27,7 +27,9 @@ make test-fast    # pytest -n auto, no coverage
 make security     # bandit (medium+)
 make audit        # pip-audit
 make actions      # zizmor (GitHub Actions security lint, offline)
-make check        # lint + typecheck + test + security + audit + actions   ← full CI gate
+make smoke        # build, check artifacts, smoke-test the installed wheel and sdist
+make cliprobe     # cliprobe terminal checks on the installed wheel (needs Node 22+)
+make check        # lint + typecheck + test + security + audit + actions + smoke   ← full CI gate
 make pre-commit   # pre-commit on all files
 ```
 
