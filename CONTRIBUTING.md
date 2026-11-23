@@ -52,9 +52,11 @@ jwt-toolkit/
 │   │   ├── __init__.py       # Click root group, global flags, command registration
 │   │   ├── algorithms.py     # CLI-side algorithm validation
 │   │   ├── banner.py         # Startup banner, help screen, and the COMMANDS/EXAMPLES lists
+│   │   ├── banner_art.py     # Pre-rendered banner lettering
 │   │   ├── console.py        # Result, error, and status consoles (quiet, no-color)
 │   │   ├── credentials.py    # --secret / --secret-file handling
-│   │   ├── decoding.py       # Token input (argument, @file, stdin) and error envelopes
+│   │   ├── decoding.py       # Token input (argument, @file, stdin, size limit)
+│   │   ├── errors.py         # ToolkitCommand error boundary, JSON error document, schema version
 │   │   ├── panels.py         # Reusable Rich panels for errors and results
 │   │   └── wordlists.py      # Location of the bundled wordlist
 │   ├── commands/             # One file per `jwt-toolkit <command>`
@@ -68,25 +70,31 @@ jwt-toolkit/
 │   │   ├── sign.py
 │   │   └── verify.py
 │   └── core/                 # Pure logic, no Click and no Rich
+│       ├── algorithms.py     # The JWS algorithm registry and the public algorithm tables
 │       ├── auditor.py        # Static audit rules, key-material checks, and grading
 │       ├── claims.py         # Claim and critical-header checks used by verify
 │       ├── cracker.py        # Batched, optionally parallel HMAC secret search
 │       ├── crypto.py         # HMAC and asymmetric signing and verification
-│       ├── decoder.py        # JWT splitting and decoding
+│       ├── decoder.py        # JWT splitting and strict decoding, with input limits
 │       ├── diff.py           # Field-by-field token comparison
-│       ├── encoding.py       # base64url and strict JSON helpers
+│       ├── encoding.py       # Canonical base64url and strict JSON (UTF-8, no duplicates, depth limit)
 │       ├── errors.py         # Domain-specific exceptions with stable codes
 │       ├── forge.py          # Defensive attack-shaped variant generation
 │       ├── jwks.py           # JWKS fetching and key selection
+│       ├── keys.py           # HmacKey, PublicKey, PrivateKey: the key decides the algorithm family
 │       ├── lifetime.py       # --expires-in parsing
 │       ├── timestamps.py     # Human-readable time claims
+│       ├── verifier.py       # The one signature and claims pipeline for verify and audit
 │       └── wordlist.py       # Streaming wordlist reader and candidate expansion
 ├── scripts/                  # Package smoke test and cliprobe runner (dev only, not shipped in the wheel)
 ├── tests/                    # Pytest suite mirroring the source layout
 │   ├── conftest.py           # Shared fixtures (keys, tokens, tmp wordlists)
 │   ├── helpers.py            # Test helpers
 │   ├── test_cmd_*.py         # CLI-level tests (invoke commands via Click runner)
-│   └── test_*.py             # Core-level unit tests
+│   ├── test_interop.py       # RFC examples and PyJWT cross-checks
+│   ├── test_properties.py    # Hypothesis property tests for hostile input
+│   ├── test_*.py             # Core-level unit tests
+│   └── vectors/              # RFC JWS examples, with their sources
 ├── wordlists/                # Bundled wordlist resources
 ├── assets/                   # README images and demo assets
 ├── .github/
@@ -211,7 +219,7 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/). The form
 `<scope>` is a short identifier for the area of the codebase. Use a command name, a `core/` module name, or a high-level area:
 
 - Command scopes: `audit`, `crack`, `decode`, `diff`, `verify`, `sign`, `forge`, `generate-secret`, `download-wordlists`
-- Core scopes: `core`, `auditor`, `claims`, `cracker`, `crypto`, `decoder`, `forge`, `jwks`, `wordlist`
+- Core scopes: `core`, `algorithms`, `auditor`, `claims`, `cracker`, `crypto`, `decoder`, `encoding`, `forge`, `jwks`, `keys`, `verifier`, `wordlist`
 - Other scopes: `cli`, `readme`, `ci`, `deps`, `release`
 
 The `commit-msg` hook installed by `make install` checks these rules, and CI checks the PR title, because the squash commit on `main` uses it as the message and release-please reads it to decide the next version.
@@ -265,6 +273,8 @@ Dependabot opens grouped pull requests on Mondays: runtime and dev dependencies 
 - Use the fixtures in `tests/conftest.py` for keys, tokens, and temporary wordlists. Do not check in real secrets or production tokens.
 - New audit rules require both a positive case (the rule triggers) and a negative case (the rule does not trigger).
 - New verification or signing behavior must cover error paths: invalid signature, missing claim, malformed key.
+- Signing and verification are checked against the RFC 7515, RFC 8037 and RFC 7520 examples and against PyJWT in both directions (`tests/test_interop.py`). PyJWT is a development dependency only; the package never imports it.
+- Code that parses tokens, JSON or JWKs gets property tests in `tests/test_properties.py` (Hypothesis). They assert that hostile input ends in a result or a typed error, never a crash. Keep examples bounded so the suite stays fast.
 
 Run the suite with:
 
