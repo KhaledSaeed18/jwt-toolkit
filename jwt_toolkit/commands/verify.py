@@ -8,23 +8,15 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from jwt_toolkit.cli.algorithms import ensure_signing_algorithm, is_hmac
 from jwt_toolkit.cli.console import console
 from jwt_toolkit.cli.credentials import resolve_secret, secret_file_option
 from jwt_toolkit.cli.decoding import JSON_SCHEMA_VERSION, resolve_token, safe_decode
 from jwt_toolkit.cli.errors import ToolkitCommand, reported_as
-from jwt_toolkit.core.claims import (
-    Check,
-    check_audience,
-    check_critical_headers,
-    check_issuer,
-    check_time_claims,
-)
-from jwt_toolkit.core.crypto import verify_asymmetric, verify_signature
-from jwt_toolkit.core.decoder import DecodedToken
-from jwt_toolkit.core.encoding import JsonObject
-from jwt_toolkit.core.errors import JwtToolkitError, UnsupportedAlgorithmError
-from jwt_toolkit.core.jwks import resolve_jwks_key
+from jwt_toolkit.core.claims import Check
+from jwt_toolkit.core.errors import JwtToolkitError
+from jwt_toolkit.core.jwks import resolve_jwks_public_key
+from jwt_toolkit.core.keys import HmacKey, VerificationKey, load_public_key_for
+from jwt_toolkit.core.verifier import Expectations, KeyResolver, verify_token
 
 RESULT_COLORS = {
     "PASS": "bold green",
@@ -94,42 +86,24 @@ def verify(
     decoded = safe_decode(resolve_token(token))
     _require_one_key_source(secret=secret, public_key_path=public_key_path, jwks_url=jwks_url)
 
-    alg, rejection = _pin_algorithm(decoded.header, uses_secret=secret is not None)
-    if alg is None:
-        signature_check = Check("FAIL", "signature", rejection or "Token is rejected")
-    else:
-        try:
-            sig_valid = _verify_signature(
-                decoded,
-                alg,
-                secret=secret,
-                public_key_path=public_key_path,
-                jwks_url=jwks_url,
-            )
-        except JwtToolkitError as exc:
-            raise reported_as(
-                exc,
-                code="key_error",
-                title="Key Error",
-                headline="Could not verify signature with the provided key",
-            ) from exc
-        signature_check = (
-            Check("PASS", "signature", "Signature is valid")
-            if sig_valid
-            else Check("FAIL", "signature", "Signature is invalid, wrong key or tampered token")
+    key = _verification_key(secret=secret, public_key_path=public_key_path, jwks_url=jwks_url)
+    try:
+        result = verify_token(
+            decoded,
+            key=key,
+            now=time.time(),
+            expected=Expectations(issuer=issuer, audience=audience, leeway=leeway),
+            key_checks=_transport_checks(jwks_url),
         )
-
-    checks = [
-        signature_check,
-        *_transport_checks(jwks_url),
-        *check_critical_headers(decoded.header),
-        *check_time_claims(decoded.payload, now=time.time(), leeway=leeway),
-    ]
-    if issuer is not None:
-        checks.append(check_issuer(decoded.payload, issuer))
-    if audience is not None:
-        checks.append(check_audience(decoded.payload, audience))
-    failed = any(c.result == "FAIL" for c in checks)
+    except JwtToolkitError as exc:
+        raise reported_as(
+            exc,
+            code="key_error",
+            title="Key Error",
+            headline="Could not verify signature with the provided key",
+        ) from exc
+    checks = list(result.checks)
+    failed = not result.valid
 
     if as_json:
         _emit_json(checks, failed=failed)
@@ -164,6 +138,23 @@ def _require_one_key_source(
     )
 
 
+def _verification_key(
+    *, secret: str | None, public_key_path: Path | None, jwks_url: str | None
+) -> VerificationKey | KeyResolver:
+    # Keys are loaded only once the token's algorithm has been accepted, so a token
+    # rejected on its own merits is a verdict (exit 1), never a key error.
+    if secret is not None:
+        return HmacKey.from_text(secret)
+    if jwks_url is not None:
+        url = jwks_url
+        return lambda decoded, spec: resolve_jwks_public_key(
+            url, kid=decoded.header.get("kid"), alg=spec.name
+        )
+    path = public_key_path
+    assert path is not None  # _require_one_key_source guarantees one source
+    return lambda _decoded, spec: load_public_key_for(path.read_bytes(), spec)
+
+
 def _transport_checks(jwks_url: str | None) -> list[Check]:
     # Plain HTTP stays allowed for compatibility, but the verdict must say the
     # key itself was exposed to tampering in transit.
@@ -177,48 +168,6 @@ def _transport_checks(jwks_url: str | None) -> list[Check]:
             "substitute them; use an https:// JWKS URL",
         )
     ]
-
-
-def _pin_algorithm(header: JsonObject, *, uses_secret: bool) -> tuple[str | None, str | None]:
-    # The supplied key decides the algorithm family. A token that names another
-    # family, no algorithm, or alg: none is rejected as a token, never trusted.
-    try:
-        alg = ensure_signing_algorithm(header)
-    except UnsupportedAlgorithmError as exc:
-        return None, " ".join((exc.headline, *exc.details[1:]))
-    if uses_secret and not is_hmac(alg):
-        return None, (
-            f"Token claims {alg}, but an HMAC secret was supplied; the key decides the "
-            "algorithm, so the token is rejected"
-        )
-    if not uses_secret and is_hmac(alg):
-        return None, (
-            f"Token claims {alg}, but a public key was supplied; accepting it would be "
-            "algorithm confusion (CVE-2016-10555)"
-        )
-    return alg, None
-
-
-def _verify_signature(
-    decoded: DecodedToken,
-    alg: str,
-    *,
-    secret: str | None,
-    public_key_path: Path | None,
-    jwks_url: str | None,
-) -> bool:
-    if is_hmac(alg):
-        return verify_signature(
-            decoded.header_b64, decoded.payload_b64, decoded.signature, secret or "", alg
-        )
-    if jwks_url is not None:
-        kid = decoded.header.get("kid")
-        pem_bytes = resolve_jwks_key(jwks_url, kid=kid, alg=alg)
-    else:
-        pem_bytes = public_key_path.read_bytes()  # type: ignore[union-attr]
-    return verify_asymmetric(
-        decoded.header_b64, decoded.payload_b64, decoded.signature, pem_bytes, alg
-    )
 
 
 def _emit_json(checks: list[Check], *, failed: bool) -> None:
