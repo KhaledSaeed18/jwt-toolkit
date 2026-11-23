@@ -1,7 +1,7 @@
 # jwt-toolkit dev commands. Run `make` or `make help` for the list.
 
 .DEFAULT_GOAL := help
-.PHONY: help install fmt lint typecheck test test-fast cov security audit check pre-commit clean
+.PHONY: help install fmt lint typecheck test test-fast cov security audit actions check pre-commit clean
 
 UV ?= uv
 
@@ -38,7 +38,10 @@ security:  ## Static security scan of the source.
 audit:  ## Check dependencies for known CVEs.
 	$(UV) run pip-audit
 
-check: lint typecheck test security audit  ## Full local CI gate.
+actions:  ## Security-lint the GitHub Actions workflows (zizmor).
+	$(UV) run zizmor --offline --persona=regular .github/workflows
+
+check: lint typecheck test security audit actions  ## Full local CI gate.
 
 pre-commit:  ## Run all pre-commit hooks on every file.
 	$(UV) run pre-commit run --all-files

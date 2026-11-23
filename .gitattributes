@@ -1,0 +1,3 @@
+# The bundled wordlist ships with a pinned SHA-256, so its bytes must not change
+# with the checkout platform (Windows would otherwise convert it to CRLF).
+wordlists/** -text

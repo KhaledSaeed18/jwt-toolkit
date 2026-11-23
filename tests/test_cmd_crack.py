@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import os
 
 import pytest
 
@@ -289,7 +290,9 @@ def test_crack_output_file_is_owner_only(runner, tmp_path):
     out.write_text("old")
     out.chmod(0o644)
     invoke(runner, wl, make_token({"sub": "1"}), "--output", str(out))
-    assert out.stat().st_mode & 0o777 == 0o600
+    # Windows has no POSIX owner/group/other bits; there only the content is checked.
+    if os.name == "posix":
+        assert out.stat().st_mode & 0o777 == 0o600
     assert out.read_text() == "testsecret\n"
 
 
