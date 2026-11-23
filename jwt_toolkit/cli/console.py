@@ -3,6 +3,9 @@ from typing import Any
 
 from rich.console import Console
 
+# Environment variables Rich reads when a Console is created (terminal detection, size).
+_RICH_ENV = ("FORCE_COLOR", "TTY_COMPATIBLE", "TTY_INTERACTIVE", "TERM", "COLORTERM", "COLUMNS")
+
 
 def is_quiet() -> bool:
     return bool(os.environ.get("JWT_TOOLKIT_QUIET"))
@@ -15,12 +18,16 @@ class _ConsoleProxy:
         self._stderr = stderr
         self._mute_when_quiet = mute_when_quiet
         self._inner: Console | None = None
-        self._settings: tuple[bool, bool] | None = None
+        self._settings: tuple[bool, bool, tuple[str | None, ...]] | None = None
 
     def _get(self) -> Console:
         # Rebuilt when the settings change, so a process that runs several commands
         # (or a test suite) never keeps a console configured for an earlier one.
-        settings = (bool(os.environ.get("NO_COLOR")), self._mute_when_quiet and is_quiet())
+        settings = (
+            bool(os.environ.get("NO_COLOR")),
+            self._mute_when_quiet and is_quiet(),
+            tuple(os.environ.get(name) for name in _RICH_ENV),
+        )
         if self._inner is None or settings != self._settings:
             # Rich's no_color drops colors but keeps dim, bold and italic. No color
             # system at all means no escape codes, which is what NO_COLOR users expect.
