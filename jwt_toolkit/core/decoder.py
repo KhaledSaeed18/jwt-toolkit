@@ -9,6 +9,7 @@ from jwt_toolkit.core.encoding import (
     JsonTooDeepError,
     NonFiniteNumberError,
     base64url_decode,
+    base64url_encode,
     strict_json_loads,
 )
 from jwt_toolkit.core.errors import TokenDecodeError
@@ -86,13 +87,20 @@ def _decode_segment(segment: str) -> bytes:
             "A token part ends in '=' padding, which a JWT never contains",
         )
     try:
-        return base64url_decode(segment)
+        decoded = base64url_decode(segment)
     except binascii.Error as exc:
         raise _bad_base64url(
             None,
             "One or more parts could not be decoded",
             "The token may be truncated or corrupted",
         ) from exc
+    if base64url_encode(decoded) != segment:
+        raise _bad_base64url(
+            "base64url_noncanonical",
+            "A token part has stray bits in its last character",
+            "Each part has exactly one valid spelling; this one was altered",
+        )
+    return decoded
 
 
 def _invalid_json(cause: str | None, detail: str) -> TokenDecodeError:

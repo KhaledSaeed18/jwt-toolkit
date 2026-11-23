@@ -31,8 +31,14 @@ def _strict_decode(value: str, alphabet: re.Pattern[str], altchars: bytes | None
     return base64.b64decode(_pad(value.rstrip("=")), altchars=altchars, validate=True)
 
 
-def base64url_decode(value: str) -> bytes:
-    return _strict_decode(value, _BASE64URL, b"-_")
+def base64url_decode(value: str, *, canonical: bool = False) -> bytes:
+    decoded = _strict_decode(value, _BASE64URL, b"-_")
+    # RFC 4648 3.5 lets a decoder reject non-zero pad bits. A JWS part must, or one
+    # token would have several valid spellings (a signature that is still valid after
+    # its last character changes), which defeats deny-lists keyed on the token.
+    if canonical and base64url_encode(decoded) != value.rstrip("="):
+        raise binascii.Error("input is not the canonical base64url encoding")
+    return decoded
 
 
 def base64_decode_padded(value: str) -> bytes:
